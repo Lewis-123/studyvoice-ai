@@ -1,14 +1,26 @@
 import { openai } from "@ai-sdk/openai";
-import { generateText, Output } from "ai";
+import {
+  generateText,
+  Output,
+} from "ai";
 import { ZodError } from "zod";
 
 import {
   studyPackSchema,
   studyRequestSchema,
 } from "@/lib/study-schema";
+import {
+  createAiErrorResponse,
+  createMissingApiKeyResponse,
+  createPublicErrorResponse,
+  createRequestAbortContext,
+  type RequestAbortContext,
+} from "@/lib/server-ai-error";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+const SERVER_TIMEOUT_MILLISECONDS = 55_000;
 
 function createRequestedSectionsList(
   selectedOutputs: string[],
@@ -32,12 +44,24 @@ function createRequestedSectionsList(
 }
 
 export async function POST(request: Request) {
+  if (!process.env.OPENAI_API_KEY?.trim()) {
+    return createMissingApiKeyResponse();
+  }
+
+  let abortContext: RequestAbortContext | null =
+    null;
+
   try {
     const requestBody: unknown =
       await request.json();
 
     const studyRequest =
       studyRequestSchema.parse(requestBody);
+
+    abortContext = createRequestAbortContext(
+      request.signal,
+      SERVER_TIMEOUT_MILLISECONDS,
+    );
 
     const requestedSections =
       createRequestedSectionsList(
@@ -49,12 +73,13 @@ export async function POST(request: Request) {
 
       output: Output.object({
         schema: studyPackSchema,
-
         name: "study_pack",
-
         description:
           "A structured educational study pack containing only the learning materials requested by the user.",
       }),
+
+      maxRetries: 1,
+      abortSignal: abortContext.signal,
 
       system: `
 You are StudyVoice AI, an accurate, supportive, and practical educational assistant.
@@ -132,49 +157,54 @@ Every section that was not requested must be null.
       },
     });
 
-    return Response.json(output);
+    return Response.json(output, {
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    });
   } catch (error) {
     if (error instanceof SyntaxError) {
-      return Response.json(
-        {
-          error:
-            "The request body was not valid JSON.",
-        },
-        {
-          status: 400,
-        },
+      return createPublicErrorResponse(
+        "INVALID_REQUEST",
+        "The request body was not valid JSON.",
+        400,
+        false,
       );
     }
 
     if (error instanceof ZodError) {
-      const firstIssue =
-        error.issues[0]?.message;
-
-      return Response.json(
-        {
-          error:
-            firstIssue ??
-            "The study request was invalid.",
-        },
-        {
-          status: 400,
-        },
+      return createPublicErrorResponse(
+        "INVALID_REQUEST",
+        error.issues[0]?.message ??
+          "The study request was invalid.",
+        400,
+        false,
       );
     }
 
-    console.error(
-      "Study generation failed:",
-      error,
-    );
+    if (abortContext?.didTimeout()) {
+      return createPublicErrorResponse(
+        "REQUEST_TIMEOUT",
+        "Study-pack generation exceeded the server time limit. Try fewer outputs or a shorter input.",
+        504,
+        true,
+      );
+    }
 
-    return Response.json(
-      {
-        error:
-          "The study pack could not be generated. Check the API key, API balance, model access, and terminal output.",
-      },
-      {
-        status: 500,
-      },
+    if (abortContext?.wasClientAborted()) {
+      return createPublicErrorResponse(
+        "REQUEST_CANCELLED",
+        "Study-pack generation was cancelled.",
+        499,
+        true,
+      );
+    }
+
+    return createAiErrorResponse(
+      error,
+      "study generation",
     );
+  } finally {
+    abortContext?.cleanup();
   }
 }

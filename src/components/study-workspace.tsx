@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
@@ -12,9 +13,10 @@ import StudyExportActions from "@/components/study-export-actions";
 import StudyHistory from "@/components/study-history";
 import StudyResults from "@/components/study-results";
 import VoiceRecorder from "@/components/voice-recorder";
-import type {
-  OutputId,
-  StudyPack,
+import {
+  studyPackSchema,
+  type OutputId,
+  type StudyPack,
 } from "@/lib/study-schema";
 import {
   MAX_SAVED_STUDY_SESSIONS,
@@ -29,9 +31,19 @@ import {
   type StudyTranscript,
 } from "@/lib/study-session";
 
-type InputMode = StudySessionInputMode;
-type EducationLevel = StudySessionEducationLevel;
-type QuizDifficulty = StudySessionQuizDifficulty;
+type InputMode =
+  StudySessionInputMode;
+
+type EducationLevel =
+  StudySessionEducationLevel;
+
+type QuizDifficulty =
+  StudySessionQuizDifficulty;
+
+type GenerationPhase =
+  | "idle"
+  | "transcribing"
+  | "generating";
 
 type StudyOutput = {
   id: OutputId;
@@ -40,7 +52,24 @@ type StudyOutput = {
   icon: string;
 };
 
-const MAX_AUDIO_SIZE = 20 * 1024 * 1024;
+const MAX_AUDIO_SIZE =
+  20 * 1024 * 1024;
+
+const CLIENT_REQUEST_TIMEOUT =
+  70_000;
+
+const LONG_REQUEST_SECONDS = 20;
+
+const SUPPORTED_AUDIO_EXTENSIONS =
+  new Set([
+    "mp3",
+    "mp4",
+    "mpeg",
+    "mpga",
+    "m4a",
+    "wav",
+    "webm",
+  ]);
 
 const inputModes: Array<{
   id: InputMode;
@@ -131,94 +160,571 @@ const defaultOutputs: OutputId[] = [
   "actionPoints",
 ];
 
-function getApiErrorMessage(
+class StudyRequestError extends Error {
+  code: string;
+  retryable: boolean;
+
+  constructor(
+    code: string,
+    message: string,
+    retryable: boolean,
+  ) {
+    super(message);
+
+    this.name = "StudyRequestError";
+    this.code = code;
+    this.retryable = retryable;
+  }
+}
+
+function getFileExtension(
+  filename: string,
+) {
+  return (
+    filename
+      .split(".")
+      .pop()
+      ?.trim()
+      .toLowerCase() ?? ""
+  );
+}
+
+function isSupportedAudioFile(
+  file: File,
+) {
+  return SUPPORTED_AUDIO_EXTENSIONS.has(
+    getFileExtension(file.name),
+  );
+}
+
+function parseApiError(
   responseData: unknown,
-  fallbackMessage: string,
+  status: number,
 ) {
   if (
     typeof responseData === "object" &&
     responseData !== null &&
-    "error" in responseData &&
-    typeof responseData.error === "string"
+    "error" in responseData
   ) {
-    return responseData.error;
+    const errorValue =
+      responseData.error;
+
+    if (
+      typeof errorValue === "object" &&
+      errorValue !== null &&
+      "message" in errorValue &&
+      typeof errorValue.message ===
+        "string"
+    ) {
+      return new StudyRequestError(
+        "code" in errorValue &&
+          typeof errorValue.code ===
+            "string"
+          ? errorValue.code
+          : "UNKNOWN_ERROR",
+
+        errorValue.message,
+
+        "retryable" in errorValue &&
+          typeof errorValue.retryable ===
+            "boolean"
+          ? errorValue.retryable
+          : status >= 500,
+      );
+    }
+
+    if (
+      typeof errorValue === "string"
+    ) {
+      return new StudyRequestError(
+        "UNKNOWN_ERROR",
+        errorValue,
+        status >= 500,
+      );
+    }
   }
 
-  return fallbackMessage;
+  if (status === 402) {
+    return new StudyRequestError(
+      "API_CREDIT_EXHAUSTED",
+      "The API account has no available credit.",
+      false,
+    );
+  }
+
+  if (status === 413) {
+    return new StudyRequestError(
+      "FILE_TOO_LARGE",
+      "The uploaded file is too large.",
+      false,
+    );
+  }
+
+  if (status === 415) {
+    return new StudyRequestError(
+      "UNSUPPORTED_AUDIO",
+      "The selected audio format is not supported.",
+      false,
+    );
+  }
+
+  if (status === 429) {
+    return new StudyRequestError(
+      "RATE_LIMITED",
+      "The service is temporarily receiving too many requests.",
+      true,
+    );
+  }
+
+  if (status === 504) {
+    return new StudyRequestError(
+      "REQUEST_TIMEOUT",
+      "The request took too long to complete.",
+      true,
+    );
+  }
+
+  return new StudyRequestError(
+    "UNKNOWN_ERROR",
+    "The request could not be completed.",
+    status >= 500,
+  );
+}
+
+async function requestJson<T>({
+  url,
+  options,
+  externalSignal,
+  timeoutMilliseconds,
+}: {
+  url: string;
+  options: RequestInit;
+  externalSignal: AbortSignal;
+  timeoutMilliseconds: number;
+}): Promise<T> {
+  const controller =
+    new AbortController();
+
+  let didTimeout = false;
+
+  function abortFromExternalSignal() {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  }
+
+  if (externalSignal.aborted) {
+    abortFromExternalSignal();
+  } else {
+    externalSignal.addEventListener(
+      "abort",
+      abortFromExternalSignal,
+      {
+        once: true,
+      },
+    );
+  }
+
+  const timeoutId =
+    window.setTimeout(() => {
+      didTimeout = true;
+
+      if (
+        !controller.signal.aborted
+      ) {
+        controller.abort();
+      }
+    }, timeoutMilliseconds);
+
+  try {
+    const response = await fetch(
+      url,
+      {
+        ...options,
+        signal: controller.signal,
+      },
+    );
+
+    const rawResponse =
+      await response.text();
+
+    let responseData: unknown = null;
+
+    if (rawResponse) {
+      try {
+        responseData =
+          JSON.parse(rawResponse);
+      } catch {
+        responseData = rawResponse;
+      }
+    }
+
+    if (!response.ok) {
+      throw parseApiError(
+        responseData,
+        response.status,
+      );
+    }
+
+    return responseData as T;
+  } catch (error) {
+    if (
+      error instanceof
+      StudyRequestError
+    ) {
+      throw error;
+    }
+
+    if (didTimeout) {
+      throw new StudyRequestError(
+        "REQUEST_TIMEOUT",
+        "The current request stage exceeded 70 seconds.",
+        true,
+      );
+    }
+
+    if (externalSignal.aborted) {
+      throw new StudyRequestError(
+        "REQUEST_CANCELLED",
+        "The request was cancelled.",
+        true,
+      );
+    }
+
+    if (
+      error instanceof TypeError ||
+      (error instanceof Error &&
+        error.message
+          .toLowerCase()
+          .includes("fetch"))
+    ) {
+      throw new StudyRequestError(
+        "NETWORK_ERROR",
+        "StudyVoice AI could not reach the server. Check your connection and try again.",
+        true,
+      );
+    }
+
+    throw new StudyRequestError(
+      "UNKNOWN_ERROR",
+      "An unexpected request error occurred.",
+      true,
+    );
+  } finally {
+    window.clearTimeout(timeoutId);
+
+    externalSignal.removeEventListener(
+      "abort",
+      abortFromExternalSignal,
+    );
+  }
+}
+
+function normalizeClientError(
+  error: unknown,
+) {
+  if (
+    error instanceof StudyRequestError
+  ) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return new StudyRequestError(
+      "UNKNOWN_ERROR",
+      error.message,
+      true,
+    );
+  }
+
+  return new StudyRequestError(
+    "UNKNOWN_ERROR",
+    "An unexpected error occurred.",
+    true,
+  );
+}
+
+function getRecoveryMessage(
+  code: string,
+) {
+  switch (code) {
+    case "CONFIGURATION_ERROR":
+      return "Create .env.local, add OPENAI_API_KEY, and restart the development server.";
+
+    case "INVALID_API_KEY":
+      return "Create a new API key, update .env.local, and restart the application.";
+
+    case "API_PERMISSION_DENIED":
+      return "Check the API project's permissions and confirm that the selected models are available.";
+
+    case "API_CREDIT_EXHAUSTED":
+      return "Add API credit or increase the API project spending limit before testing again.";
+
+    case "RATE_LIMITED":
+      return "Wait approximately one minute before trying again.";
+
+    case "NETWORK_ERROR":
+      return "Confirm that your internet connection and development server are working.";
+
+    case "PROVIDER_UNAVAILABLE":
+      return "Wait briefly and try again. The AI provider may be experiencing a temporary service issue.";
+
+    case "REQUEST_TIMEOUT":
+      return "Try a shorter recording, fewer selected outputs, or a smaller block of notes.";
+
+    case "UNSUPPORTED_AUDIO":
+      return "Use MP3, MP4, MPEG, MPGA, M4A, WAV, or WebM audio.";
+
+    case "FILE_TOO_LARGE":
+      return "Choose or record an audio file smaller than 20 MB.";
+
+    case "TRANSCRIPTION_FAILED":
+      return "Use a clearer recording with less background noise and audible speech.";
+
+    case "INVALID_AI_RESPONSE":
+      return "Try again. The AI response did not match the required study-pack structure.";
+
+    case "AUDIO_INPUT_ERROR":
+      return "Check the selected file or microphone settings and try again.";
+
+    case "VALIDATION_ERROR":
+      return "Correct the highlighted input issue before generating the study pack.";
+
+    default:
+      return "Review the message, correct the issue, and try again.";
+  }
+}
+
+function formatElapsedTime(
+  totalSeconds: number,
+) {
+  const minutes = Math.floor(
+    totalSeconds / 60,
+  );
+
+  const seconds =
+    totalSeconds % 60;
+
+  return `${minutes}:${seconds
+    .toString()
+    .padStart(2, "0")}`;
 }
 
 export default function StudyWorkspace() {
+  const activeRequestRef =
+    useRef<AbortController | null>(
+      null,
+    );
+
   const [inputMode, setInputMode] =
     useState<InputMode>("topic");
 
-  const [topic, setTopic] = useState("");
-  const [notes, setNotes] = useState("");
+  const [topic, setTopic] =
+    useState("");
+
+  const [notes, setNotes] =
+    useState("");
+
   const [audioFile, setAudioFile] =
     useState<File | null>(null);
 
-  const [educationLevel, setEducationLevel] =
-    useState<EducationLevel>("beginner");
+  const [
+    educationLevel,
+    setEducationLevel,
+  ] = useState<EducationLevel>(
+    "beginner",
+  );
 
-  const [difficulty, setDifficulty] =
-    useState<QuizDifficulty>("medium");
+  const [
+    difficulty,
+    setDifficulty,
+  ] = useState<QuizDifficulty>(
+    "medium",
+  );
 
-  const [selectedOutputs, setSelectedOutputs] =
-    useState<OutputId[]>(defaultOutputs);
+  const [
+    selectedOutputs,
+    setSelectedOutputs,
+  ] = useState<OutputId[]>(
+    defaultOutputs,
+  );
 
-  const [errorMessage, setErrorMessage] = useState("");
-  const [statusMessage, setStatusMessage] = useState("");
+  const [
+    requestError,
+    setRequestError,
+  ] =
+    useState<StudyRequestError | null>(
+      null,
+    );
 
-  const [isPrepared, setIsPrepared] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
+  const [
+    statusMessage,
+    setStatusMessage,
+  ] = useState("");
 
-  const [generationMessage, setGenerationMessage] =
-    useState("Generating study pack...");
+  const [
+    isPrepared,
+    setIsPrepared,
+  ] = useState(false);
 
-  const [transcript, setTranscript] =
-    useState<StudyTranscript | null>(null);
+  const [
+    isGenerating,
+    setIsGenerating,
+  ] = useState(false);
 
-  const [studyPack, setStudyPack] =
-    useState<StudyPack | null>(null);
+  const [
+    isRecording,
+    setIsRecording,
+  ] = useState(false);
 
-  const [generatedOutputs, setGeneratedOutputs] =
-    useState<OutputId[]>([]);
+  const [
+    generationPhase,
+    setGenerationPhase,
+  ] =
+    useState<GenerationPhase>("idle");
 
-  const [savedSessions, setSavedSessions] = useState<
+  const [
+    elapsedSeconds,
+    setElapsedSeconds,
+  ] = useState(0);
+
+  const [
+    transcript,
+    setTranscript,
+  ] =
+    useState<StudyTranscript | null>(
+      null,
+    );
+
+  const [
+    studyPack,
+    setStudyPack,
+  ] =
+    useState<StudyPack | null>(
+      null,
+    );
+
+  const [
+    generatedOutputs,
+    setGeneratedOutputs,
+  ] = useState<OutputId[]>([]);
+
+  const [
+    savedSessions,
+    setSavedSessions,
+  ] = useState<
     SavedStudySession[]
   >([]);
 
-  const [activeSessionId, setActiveSessionId] =
-    useState<string | null>(null);
+  const [
+    activeSessionId,
+    setActiveSessionId,
+  ] =
+    useState<string | null>(
+      null,
+    );
 
-  const controlsDisabled = isGenerating || isRecording;
+  const controlsDisabled =
+    isGenerating || isRecording;
+
+  const generationMessage =
+    generationPhase ===
+    "transcribing"
+      ? "Transcribing voice note..."
+      : "Generating study pack...";
+
+  const isTakingLong =
+    isGenerating &&
+    elapsedSeconds >=
+      LONG_REQUEST_SECONDS;
 
   useEffect(() => {
-    setSavedSessions(loadSavedStudySessions());
+    setSavedSessions(
+      loadSavedStudySessions(),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!isGenerating) {
+      return;
+    }
+
+    const timerId =
+      window.setInterval(() => {
+        setElapsedSeconds(
+          (currentSeconds) =>
+            currentSeconds + 1,
+        );
+      }, 1000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [isGenerating]);
+
+  useEffect(() => {
+    return () => {
+      activeRequestRef.current?.abort();
+    };
   }, []);
 
   const sourceTitle = useMemo(() => {
     if (inputMode === "topic") {
-      return topic.trim() || "No topic entered";
+      return (
+        topic.trim() ||
+        "No topic entered"
+      );
     }
 
     if (inputMode === "notes") {
-      const cleanNotes = notes.trim();
+      const cleanNotes =
+        notes.trim();
 
       if (!cleanNotes) {
         return "No notes entered";
       }
 
       return cleanNotes.length > 70
-        ? `${cleanNotes.slice(0, 70)}...`
+        ? `${cleanNotes.slice(
+            0,
+            70,
+          )}...`
         : cleanNotes;
     }
 
-    return audioFile?.name ?? "No audio recording selected";
-  }, [audioFile, inputMode, notes, topic]);
+    return (
+      audioFile?.name ??
+      "No audio recording selected"
+    );
+  }, [
+    audioFile,
+    inputMode,
+    notes,
+    topic,
+  ]);
+
+  const resultSourceTitle =
+    useMemo(() => {
+      if (!activeSessionId) {
+        return sourceTitle;
+      }
+
+      return (
+        savedSessions.find(
+          (session) =>
+            session.id ===
+            activeSessionId,
+        )?.sourceTitle ??
+        sourceTitle
+      );
+    }, [
+      activeSessionId,
+      savedSessions,
+      sourceTitle,
+    ]);
 
   function clearStatusMessages() {
-    setErrorMessage("");
+    setRequestError(null);
     setStatusMessage("");
     setIsPrepared(false);
   }
@@ -234,7 +740,9 @@ export default function StudyWorkspace() {
     clearGeneratedContent();
   }
 
-  function selectInputMode(mode: InputMode) {
+  function selectInputMode(
+    mode: InputMode,
+  ) {
     if (controlsDisabled) {
       return;
     }
@@ -247,20 +755,32 @@ export default function StudyWorkspace() {
     }
   }
 
-  function toggleOutput(outputId: OutputId) {
+  function toggleOutput(
+    outputId: OutputId,
+  ) {
     if (controlsDisabled) {
       return;
     }
 
-    setSelectedOutputs((currentOutputs) => {
-      if (currentOutputs.includes(outputId)) {
-        return currentOutputs.filter(
-          (item) => item !== outputId,
-        );
-      }
+    setSelectedOutputs(
+      (currentOutputs) => {
+        if (
+          currentOutputs.includes(
+            outputId,
+          )
+        ) {
+          return currentOutputs.filter(
+            (item) =>
+              item !== outputId,
+          );
+        }
 
-      return [...currentOutputs, outputId];
-    });
+        return [
+          ...currentOutputs,
+          outputId,
+        ];
+      },
+    );
 
     resetGeneratedResults();
   }
@@ -271,7 +791,9 @@ export default function StudyWorkspace() {
     }
 
     setSelectedOutputs(
-      studyOutputs.map((output) => output.id),
+      studyOutputs.map(
+        (output) => output.id,
+      ),
     );
 
     resetGeneratedResults();
@@ -286,16 +808,24 @@ export default function StudyWorkspace() {
     resetGeneratedResults();
   }
 
-  function handleVoiceFileReady(file: File) {
+  function handleVoiceFileReady(
+    file: File,
+  ) {
     clearStatusMessages();
     clearGeneratedContent();
     setTranscript(null);
 
-    if (!file.type.startsWith("audio/")) {
+    if (
+      !isSupportedAudioFile(file)
+    ) {
       setAudioFile(null);
 
-      setErrorMessage(
-        "Please select a valid audio recording.",
+      setRequestError(
+        new StudyRequestError(
+          "UNSUPPORTED_AUDIO",
+          "The selected audio format is not supported.",
+          false,
+        ),
       );
 
       return;
@@ -304,18 +834,29 @@ export default function StudyWorkspace() {
     if (file.size === 0) {
       setAudioFile(null);
 
-      setErrorMessage(
-        "The selected audio recording is empty.",
+      setRequestError(
+        new StudyRequestError(
+          "VALIDATION_ERROR",
+          "The selected audio recording is empty.",
+          false,
+        ),
       );
 
       return;
     }
 
-    if (file.size > MAX_AUDIO_SIZE) {
+    if (
+      file.size >
+      MAX_AUDIO_SIZE
+    ) {
       setAudioFile(null);
 
-      setErrorMessage(
-        "The selected audio file is larger than the 20 MB limit.",
+      setRequestError(
+        new StudyRequestError(
+          "FILE_TOO_LARGE",
+          "The selected audio file is larger than the 20 MB limit.",
+          false,
+        ),
       );
 
       return;
@@ -330,21 +871,34 @@ export default function StudyWorkspace() {
     resetGeneratedResults();
   }
 
-  function handleVoiceError(message: string) {
-    setErrorMessage(message);
+  function handleVoiceError(
+    message: string,
+  ) {
+    if (!message) {
+      setRequestError(null);
+      return;
+    }
+
+    setRequestError(
+      new StudyRequestError(
+        "AUDIO_INPUT_ERROR",
+        message,
+        false,
+      ),
+    );
+
     setStatusMessage("");
     setIsPrepared(false);
-
-    if (message) {
-      clearGeneratedContent();
-    }
+    clearGeneratedContent();
   }
 
-  function handleRecordingChange(recording: boolean) {
+  function handleRecordingChange(
+    recording: boolean,
+  ) {
     setIsRecording(recording);
 
     if (recording) {
-      setErrorMessage("");
+      setRequestError(null);
       setStatusMessage("");
       setIsPrepared(false);
       setTranscript(null);
@@ -367,112 +921,174 @@ export default function StudyWorkspace() {
       return "Paste at least 20 characters of study notes.";
     }
 
-    if (inputMode === "voice" && !audioFile) {
+    if (
+      inputMode === "voice" &&
+      !audioFile
+    ) {
       return "Record or select an audio file before continuing.";
     }
 
-    if (selectedOutputs.length === 0) {
+    if (
+      inputMode === "voice" &&
+      audioFile &&
+      !isSupportedAudioFile(
+        audioFile,
+      )
+    ) {
+      return "Use MP3, MP4, MPEG, MPGA, M4A, WAV, or WebM audio.";
+    }
+
+    if (
+      selectedOutputs.length === 0
+    ) {
       return "Select at least one study output.";
     }
 
     return "";
   }
 
-  async function transcribeAudio(file: File) {
-    setGenerationMessage("Transcribing voice note...");
+  async function transcribeAudio(
+    file: File,
+    signal: AbortSignal,
+  ) {
+    setGenerationPhase(
+      "transcribing",
+    );
+
     setTranscript(null);
 
-    const formData = new FormData();
-    formData.append("audio", file);
+    const formData =
+      new FormData();
 
-    const response = await fetch("/api/transcribe", {
-      method: "POST",
-      body: formData,
-    });
+    formData.append(
+      "audio",
+      file,
+    );
 
-    const responseData: unknown = await response.json();
+    const responseData =
+      await requestJson<unknown>({
+        url: "/api/transcribe",
 
-    if (!response.ok) {
-      throw new Error(
-        getApiErrorMessage(
-          responseData,
-          "The voice note could not be transcribed.",
-        ),
-      );
-    }
+        options: {
+          method: "POST",
+          body: formData,
+        },
+
+        externalSignal: signal,
+
+        timeoutMilliseconds:
+          CLIENT_REQUEST_TIMEOUT,
+      });
 
     if (
-      typeof responseData !== "object" ||
+      typeof responseData !==
+        "object" ||
       responseData === null ||
       !("text" in responseData) ||
-      typeof responseData.text !== "string"
+      typeof responseData.text !==
+        "string"
     ) {
-      throw new Error(
+      throw new StudyRequestError(
+        "INVALID_AI_RESPONSE",
         "The transcription service returned an invalid response.",
+        true,
       );
     }
 
-    const transcriptResult: StudyTranscript = {
-      text: responseData.text.trim(),
+    const transcriptResult: StudyTranscript =
+      {
+        text: responseData.text.trim(),
 
-      language:
-        "language" in responseData &&
-        typeof responseData.language === "string"
-          ? responseData.language
-          : null,
+        language:
+          "language" in
+            responseData &&
+          typeof responseData.language ===
+            "string"
+            ? responseData.language
+            : null,
 
-      durationInSeconds:
-        "durationInSeconds" in responseData &&
-        typeof responseData.durationInSeconds === "number"
-          ? responseData.durationInSeconds
-          : null,
-    };
+        durationInSeconds:
+          "durationInSeconds" in
+            responseData &&
+          typeof responseData.durationInSeconds ===
+            "number"
+            ? responseData.durationInSeconds
+            : null,
+      };
 
-    if (transcriptResult.text.length < 3) {
-      throw new Error(
+    if (
+      transcriptResult.text.length <
+      3
+    ) {
+      throw new StudyRequestError(
+        "TRANSCRIPTION_FAILED",
         "No clear speech was detected in the recording.",
+        true,
       );
     }
 
-    setTranscript(transcriptResult);
+    setTranscript(
+      transcriptResult,
+    );
 
     return transcriptResult;
   }
 
   async function generateStudyPack(
-    studyInputMode: "topic" | "notes",
+    studyInputMode:
+      | "topic"
+      | "notes",
     content: string,
+    signal: AbortSignal,
   ) {
-    setGenerationMessage("Generating study pack...");
+    setGenerationPhase(
+      "generating",
+    );
 
-    const response = await fetch("/api/study", {
-      method: "POST",
+    const responseData =
+      await requestJson<unknown>({
+        url: "/api/study",
 
-      headers: {
-        "Content-Type": "application/json",
-      },
+        options: {
+          method: "POST",
 
-      body: JSON.stringify({
-        inputMode: studyInputMode,
-        content,
-        educationLevel,
-        difficulty,
-        selectedOutputs,
-      }),
-    });
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
 
-    const responseData: unknown = await response.json();
+          body: JSON.stringify({
+            inputMode:
+              studyInputMode,
+            content,
+            educationLevel,
+            difficulty,
+            selectedOutputs,
+          }),
+        },
 
-    if (!response.ok) {
-      throw new Error(
-        getApiErrorMessage(
-          responseData,
-          "The study pack could not be generated.",
-        ),
+        externalSignal: signal,
+
+        timeoutMilliseconds:
+          CLIENT_REQUEST_TIMEOUT,
+      });
+
+    const validationResult =
+      studyPackSchema.safeParse(
+        responseData,
+      );
+
+    if (
+      !validationResult.success
+    ) {
+      throw new StudyRequestError(
+        "INVALID_AI_RESPONSE",
+        "The AI returned a study pack that did not match the required format.",
+        true,
       );
     }
 
-    return responseData as StudyPack;
+    return validationResult.data;
   }
 
   function saveGeneratedSession({
@@ -484,40 +1100,59 @@ export default function StudyWorkspace() {
     generatedStudyPack: StudyPack;
     sourceContent: string;
     originalInputMode: InputMode;
-    generatedTranscript: StudyTranscript | null;
+    generatedTranscript:
+      | StudyTranscript
+      | null;
   }) {
-    const newSession: SavedStudySession = {
-      id: createStudySessionId(),
-      createdAt: new Date().toISOString(),
+    const newSession: SavedStudySession =
+      {
+        id: createStudySessionId(),
 
-      inputMode: originalInputMode,
+        createdAt:
+          new Date().toISOString(),
 
-      sourceTitle:
-        sourceTitle === "No audio recording selected"
-          ? generatedStudyPack.title
-          : sourceTitle,
+        inputMode:
+          originalInputMode,
 
-      sourceContent,
+        sourceTitle:
+          sourceTitle ===
+          "No audio recording selected"
+            ? generatedStudyPack.title
+            : sourceTitle,
 
-      educationLevel,
-      difficulty,
+        sourceContent,
+        educationLevel,
+        difficulty,
 
-      generatedOutputs: [...selectedOutputs],
-      studyPack: generatedStudyPack,
-      transcript: generatedTranscript,
-    };
+        generatedOutputs: [
+          ...selectedOutputs,
+        ],
+
+        studyPack:
+          generatedStudyPack,
+
+        transcript:
+          generatedTranscript,
+      };
 
     const nextSessions = [
       newSession,
-      ...savedSessions.filter(
-        (session) => session.id !== newSession.id,
-      ),
-    ].slice(0, MAX_SAVED_STUDY_SESSIONS);
+      ...savedSessions,
+    ].slice(
+      0,
+      MAX_SAVED_STUDY_SESSIONS,
+    );
 
-    const wasSaved = saveStudySessions(nextSessions);
+    const wasSaved =
+      saveStudySessions(
+        nextSessions,
+      );
 
     setSavedSessions(nextSessions);
-    setActiveSessionId(newSession.id);
+
+    setActiveSessionId(
+      newSession.id,
+    );
 
     setStatusMessage(
       wasSaved
@@ -526,40 +1161,70 @@ export default function StudyWorkspace() {
     );
   }
 
-  function openSavedSession(session: SavedStudySession) {
+  function openSavedSession(
+    session: SavedStudySession,
+  ) {
     if (controlsDisabled) {
       return;
     }
 
-    setErrorMessage("");
+    setRequestError(null);
     setIsPrepared(true);
 
     setStatusMessage(
       "Saved study pack opened successfully.",
     );
 
-    setEducationLevel(session.educationLevel);
-    setDifficulty(session.difficulty);
-    setSelectedOutputs([...session.generatedOutputs]);
+    setEducationLevel(
+      session.educationLevel,
+    );
 
-    setStudyPack(session.studyPack);
-    setGeneratedOutputs([...session.generatedOutputs]);
-    setTranscript(session.transcript);
+    setDifficulty(
+      session.difficulty,
+    );
+
+    setSelectedOutputs([
+      ...session.generatedOutputs,
+    ]);
+
+    setStudyPack(
+      session.studyPack,
+    );
+
+    setGeneratedOutputs([
+      ...session.generatedOutputs,
+    ]);
+
+    setTranscript(
+      session.transcript,
+    );
 
     setAudioFile(null);
-    setActiveSessionId(session.id);
 
-    if (session.inputMode === "topic") {
+    setActiveSessionId(
+      session.id,
+    );
+
+    if (
+      session.inputMode ===
+      "topic"
+    ) {
       setInputMode("topic");
-      setTopic(session.sourceContent);
+      setTopic(
+        session.sourceContent,
+      );
     } else {
       setInputMode("notes");
-      setNotes(session.sourceContent);
+      setNotes(
+        session.sourceContent,
+      );
     }
 
     window.setTimeout(() => {
       document
-        .getElementById("generated-study-pack")
+        .getElementById(
+          "generated-study-pack",
+        )
         ?.scrollIntoView({
           behavior: "smooth",
           block: "start",
@@ -567,84 +1232,149 @@ export default function StudyWorkspace() {
     }, 100);
   }
 
-  function deleteSavedSession(sessionId: string) {
-    const nextSessions = savedSessions.filter(
-      (session) => session.id !== sessionId,
+  function deleteSavedSession(
+    sessionId: string,
+  ) {
+    const nextSessions =
+      savedSessions.filter(
+        (session) =>
+          session.id !==
+          sessionId,
+      );
+
+    saveStudySessions(
+      nextSessions,
     );
 
-    saveStudySessions(nextSessions);
-    setSavedSessions(nextSessions);
+    setSavedSessions(
+      nextSessions,
+    );
 
-    if (activeSessionId === sessionId) {
+    if (
+      activeSessionId ===
+      sessionId
+    ) {
       setActiveSessionId(null);
     }
 
-    setStatusMessage("Saved session deleted.");
+    setStatusMessage(
+      "Saved session deleted.",
+    );
   }
 
   function clearStudyHistory() {
     clearSavedStudySessions();
+
     setSavedSessions([]);
     setActiveSessionId(null);
-    setStatusMessage("Study history cleared.");
+
+    setStatusMessage(
+      "Study history cleared.",
+    );
   }
 
-  async function handleSubmit(
-    event: FormEvent<HTMLFormElement>,
-  ) {
-    event.preventDefault();
+  function cancelActiveRequest() {
+    activeRequestRef.current?.abort();
+  }
+
+  async function runGeneration() {
+    if (isGenerating) {
+      return;
+    }
 
     if (isRecording) {
-      setErrorMessage(
-        "Stop the recording before generating the study pack.",
+      setRequestError(
+        new StudyRequestError(
+          "VALIDATION_ERROR",
+          "Stop the recording before generating the study pack.",
+          false,
+        ),
       );
 
       return;
     }
 
-    const validationError = validateInput();
+    const validationError =
+      validateInput();
 
     if (validationError) {
-      setErrorMessage(validationError);
+      setRequestError(
+        new StudyRequestError(
+          "VALIDATION_ERROR",
+          validationError,
+          false,
+        ),
+      );
+
       setStatusMessage("");
       setIsPrepared(false);
 
       return;
     }
 
-    setErrorMessage("");
+    const requestController =
+      new AbortController();
+
+    activeRequestRef.current =
+      requestController;
+
+    setRequestError(null);
     setStatusMessage("");
     setIsPrepared(false);
     setIsGenerating(true);
+
+    setGenerationPhase(
+      inputMode === "voice"
+        ? "transcribing"
+        : "generating",
+    );
+
+    setElapsedSeconds(0);
     setStudyPack(null);
     setGeneratedOutputs([]);
     setActiveSessionId(null);
 
     try {
-      const originalInputMode = inputMode;
+      const originalInputMode =
+        inputMode;
 
-      let studyInputMode: "topic" | "notes";
+      let studyInputMode:
+        | "topic"
+        | "notes";
+
       let content: string;
 
-      let generatedTranscript: StudyTranscript | null =
-        null;
+      let generatedTranscript:
+        | StudyTranscript
+        | null = null;
 
-      if (inputMode === "voice") {
+      if (
+        inputMode === "voice"
+      ) {
         if (!audioFile) {
-          throw new Error(
+          throw new StudyRequestError(
+            "VALIDATION_ERROR",
             "Record or select an audio file before continuing.",
+            false,
           );
         }
 
         generatedTranscript =
-          await transcribeAudio(audioFile);
+          await transcribeAudio(
+            audioFile,
+            requestController.signal,
+          );
 
-        studyInputMode = "notes";
-        content = generatedTranscript.text;
+        studyInputMode =
+          "notes";
+
+        content =
+          generatedTranscript.text;
       } else {
         setTranscript(null);
 
-        studyInputMode = inputMode;
+        studyInputMode =
+          inputMode;
 
         content =
           inputMode === "topic"
@@ -656,10 +1386,17 @@ export default function StudyWorkspace() {
         await generateStudyPack(
           studyInputMode,
           content,
+          requestController.signal,
         );
 
-      setStudyPack(generatedStudyPack);
-      setGeneratedOutputs([...selectedOutputs]);
+      setStudyPack(
+        generatedStudyPack,
+      );
+
+      setGeneratedOutputs([
+        ...selectedOutputs,
+      ]);
+
       setIsPrepared(true);
 
       saveGeneratedSession({
@@ -671,35 +1408,73 @@ export default function StudyWorkspace() {
 
       window.setTimeout(() => {
         document
-          .getElementById("generated-study-pack")
+          .getElementById(
+            "generated-study-pack",
+          )
           ?.scrollIntoView({
             behavior: "smooth",
             block: "start",
           });
       }, 100);
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.";
+      const normalizedError =
+        normalizeClientError(
+          error,
+        );
 
-      setErrorMessage(message);
-      setStatusMessage("");
+      if (
+        normalizedError.code ===
+        "REQUEST_CANCELLED"
+      ) {
+        setRequestError(null);
+
+        setStatusMessage(
+          "Generation cancelled. Your input has not been deleted.",
+        );
+      } else {
+        setRequestError(
+          normalizedError,
+        );
+
+        setStatusMessage("");
+      }
+
       setIsPrepared(false);
     } finally {
+      if (
+        activeRequestRef.current ===
+        requestController
+      ) {
+        activeRequestRef.current =
+          null;
+      }
+
       setIsGenerating(false);
 
-      setGenerationMessage(
-        "Generating study pack...",
+      setGenerationPhase(
+        "idle",
       );
+
+      setElapsedSeconds(0);
     }
+  }
+
+  function handleSubmit(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+
+    void runGeneration();
   }
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 lg:px-8">
-          <Link href="/" className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="flex items-center gap-3"
+          >
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-lg font-black text-white">
               S
             </div>
@@ -731,23 +1506,35 @@ export default function StudyWorkspace() {
           </p>
 
           <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">
-            Create your interactive study pack
+            Create your interactive
+            study pack
           </h1>
 
           <p className="mt-3 max-w-3xl leading-7 text-slate-600">
-            Enter a topic, paste notes, record your voice, or
-            upload an audio file. StudyVoice AI transforms the
-            material into interactive learning resources.
+            Enter a topic, paste notes,
+            record your voice, or upload
+            an audio file. StudyVoice AI
+            transforms the material into
+            interactive learning
+            resources.
           </p>
         </div>
 
         <StudyHistory
           sessions={savedSessions}
-          activeSessionId={activeSessionId}
+          activeSessionId={
+            activeSessionId
+          }
           disabled={controlsDisabled}
-          onOpenSession={openSavedSession}
-          onDeleteSession={deleteSavedSession}
-          onClearHistory={clearStudyHistory}
+          onOpenSession={
+            openSavedSession
+          }
+          onDeleteSession={
+            deleteSavedSession
+          }
+          onClearHistory={
+            clearStudyHistory
+          }
         />
 
         {statusMessage && (
@@ -771,7 +1558,8 @@ export default function StudyWorkspace() {
                 </p>
 
                 <h2 className="mt-2 text-xl font-bold">
-                  Choose your input method
+                  Choose your input
+                  method
                 </h2>
               </div>
 
@@ -780,63 +1568,94 @@ export default function StudyWorkspace() {
                 role="tablist"
                 aria-label="Study input method"
               >
-                {inputModes.map((mode) => {
-                  const isActive = inputMode === mode.id;
+                {inputModes.map(
+                  (mode) => {
+                    const isActive =
+                      inputMode ===
+                      mode.id;
 
-                  return (
-                    <button
-                      key={mode.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={isActive}
-                      disabled={controlsDisabled}
-                      onClick={() => selectInputMode(mode.id)}
-                      className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                        isActive
-                          ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500"
-                          : "border-slate-200 bg-white hover:border-indigo-300"
-                      }`}
-                    >
-                      <span className="text-2xl">
-                        {mode.icon}
-                      </span>
-
-                      <span
-                        className={`mt-3 block text-sm font-bold ${
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={
                           isActive
-                            ? "text-indigo-700"
-                            : "text-slate-900"
+                        }
+                        disabled={
+                          controlsDisabled
+                        }
+                        onClick={() =>
+                          selectInputMode(
+                            mode.id,
+                          )
+                        }
+                        className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                          isActive
+                            ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500"
+                            : "border-slate-200 bg-white hover:border-indigo-300"
                         }`}
                       >
-                        {mode.title}
-                      </span>
+                        <span className="text-2xl">
+                          {
+                            mode.icon
+                          }
+                        </span>
 
-                      <span className="mt-1 block text-xs leading-5 text-slate-500">
-                        {mode.description}
-                      </span>
-                    </button>
-                  );
-                })}
+                        <span
+                          className={`mt-3 block text-sm font-bold ${
+                            isActive
+                              ? "text-indigo-700"
+                              : "text-slate-900"
+                          }`}
+                        >
+                          {
+                            mode.title
+                          }
+                        </span>
+
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">
+                          {
+                            mode.description
+                          }
+                        </span>
+                      </button>
+                    );
+                  },
+                )}
               </div>
 
               <div className="mt-6">
-                {inputMode === "topic" && (
+                {inputMode ===
+                  "topic" && (
                   <div>
                     <label
                       htmlFor="study-topic"
                       className="mb-2 block text-sm font-semibold text-slate-700"
                     >
-                      What would you like to study?
+                      What would you
+                      like to study?
                     </label>
 
                     <input
                       id="study-topic"
                       type="text"
                       value={topic}
-                      disabled={controlsDisabled}
-                      onChange={(event) => {
-                        setTopic(event.target.value);
-                        setTranscript(null);
+                      disabled={
+                        controlsDisabled
+                      }
+                      onChange={(
+                        event,
+                      ) => {
+                        setTopic(
+                          event.target
+                            .value,
+                        );
+
+                        setTranscript(
+                          null,
+                        );
+
                         resetGeneratedResults();
                       }}
                       placeholder="Example: Explain JavaScript promises to a beginner"
@@ -844,34 +1663,50 @@ export default function StudyWorkspace() {
                     />
 
                     <p className="mt-2 text-xs text-slate-500">
-                      Enter a subject, concept, question, or
-                      learning objective.
+                      Enter a subject,
+                      concept, question,
+                      or learning
+                      objective.
                     </p>
                   </div>
                 )}
 
-                {inputMode === "notes" && (
+                {inputMode ===
+                  "notes" && (
                   <div>
                     <div className="mb-2 flex items-center justify-between gap-4">
                       <label
                         htmlFor="study-notes"
                         className="block text-sm font-semibold text-slate-700"
                       >
-                        Paste your study notes
+                        Paste your study
+                        notes
                       </label>
 
                       <span className="text-xs text-slate-500">
-                        {notes.length} characters
+                        {notes.length}{" "}
+                        characters
                       </span>
                     </div>
 
                     <textarea
                       id="study-notes"
                       value={notes}
-                      disabled={controlsDisabled}
-                      onChange={(event) => {
-                        setNotes(event.target.value);
-                        setTranscript(null);
+                      disabled={
+                        controlsDisabled
+                      }
+                      onChange={(
+                        event,
+                      ) => {
+                        setNotes(
+                          event.target
+                            .value,
+                        );
+
+                        setTranscript(
+                          null,
+                        );
+
                         resetGeneratedResults();
                       }}
                       placeholder="Paste lecture notes, textbook content, or revision material here..."
@@ -881,14 +1716,27 @@ export default function StudyWorkspace() {
                   </div>
                 )}
 
-                {inputMode === "voice" && (
+                {inputMode ===
+                  "voice" && (
                   <VoiceRecorder
-                    audioFile={audioFile}
-                    disabled={isGenerating}
-                    maxAudioSize={MAX_AUDIO_SIZE}
-                    onAudioReady={handleVoiceFileReady}
-                    onRemove={handleVoiceFileRemove}
-                    onError={handleVoiceError}
+                    audioFile={
+                      audioFile
+                    }
+                    disabled={
+                      isGenerating
+                    }
+                    maxAudioSize={
+                      MAX_AUDIO_SIZE
+                    }
+                    onAudioReady={
+                      handleVoiceFileReady
+                    }
+                    onRemove={
+                      handleVoiceFileRemove
+                    }
+                    onError={
+                      handleVoiceError
+                    }
                     onRecordingChange={
                       handleRecordingChange
                     }
@@ -904,7 +1752,8 @@ export default function StudyWorkspace() {
                 </p>
 
                 <h2 className="mt-2 text-xl font-bold">
-                  Configure your study pack
+                  Configure your study
+                  pack
                 </h2>
               </div>
 
@@ -919,11 +1768,18 @@ export default function StudyWorkspace() {
 
                   <select
                     id="education-level"
-                    value={educationLevel}
-                    disabled={controlsDisabled}
-                    onChange={(event) => {
+                    value={
+                      educationLevel
+                    }
+                    disabled={
+                      controlsDisabled
+                    }
+                    onChange={(
+                      event,
+                    ) => {
                       setEducationLevel(
-                        event.target.value as EducationLevel,
+                        event.target
+                          .value as EducationLevel,
                       );
 
                       resetGeneratedResults();
@@ -939,7 +1795,8 @@ export default function StudyWorkspace() {
                     </option>
 
                     <option value="college">
-                      College or university
+                      College or
+                      university
                     </option>
 
                     <option value="advanced">
@@ -958,19 +1815,31 @@ export default function StudyWorkspace() {
 
                   <select
                     id="quiz-difficulty"
-                    value={difficulty}
-                    disabled={controlsDisabled}
-                    onChange={(event) => {
+                    value={
+                      difficulty
+                    }
+                    disabled={
+                      controlsDisabled
+                    }
+                    onChange={(
+                      event,
+                    ) => {
                       setDifficulty(
-                        event.target.value as QuizDifficulty,
+                        event.target
+                          .value as QuizDifficulty,
                       );
 
                       resetGeneratedResults();
                     }}
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                   >
-                    <option value="easy">Easy</option>
-                    <option value="medium">Medium</option>
+                    <option value="easy">
+                      Easy
+                    </option>
+
+                    <option value="medium">
+                      Medium
+                    </option>
 
                     <option value="challenging">
                       Challenging
@@ -983,19 +1852,26 @@ export default function StudyWorkspace() {
                 <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
                   <div>
                     <h3 className="font-bold text-slate-900">
-                      Select study outputs
+                      Select study
+                      outputs
                     </h3>
 
                     <p className="mt-1 text-sm text-slate-500">
-                      Choose one or more materials to generate.
+                      Choose one or
+                      more materials
+                      to generate.
                     </p>
                   </div>
 
                   <div className="flex items-center gap-4">
                     <button
                       type="button"
-                      disabled={controlsDisabled}
-                      onClick={clearAllOutputs}
+                      disabled={
+                        controlsDisabled
+                      }
+                      onClick={
+                        clearAllOutputs
+                      }
                       className="text-sm font-bold text-slate-500 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Clear
@@ -1003,8 +1879,12 @@ export default function StudyWorkspace() {
 
                     <button
                       type="button"
-                      disabled={controlsDisabled}
-                      onClick={selectAllOutputs}
+                      disabled={
+                        controlsDisabled
+                      }
+                      onClick={
+                        selectAllOutputs
+                      }
                       className="text-sm font-bold text-indigo-600 hover:text-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Select all
@@ -1013,57 +1893,75 @@ export default function StudyWorkspace() {
                 </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {studyOutputs.map((output) => {
-                    const isSelected =
-                      selectedOutputs.includes(output.id);
+                  {studyOutputs.map(
+                    (output) => {
+                      const isSelected =
+                        selectedOutputs.includes(
+                          output.id,
+                        );
 
-                    return (
-                      <button
-                        key={output.id}
-                        type="button"
-                        aria-pressed={isSelected}
-                        disabled={controlsDisabled}
-                        onClick={() =>
-                          toggleOutput(output.id)
-                        }
-                        className={`flex items-start gap-3 rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                          isSelected
-                            ? "border-indigo-500 bg-indigo-50"
-                            : "border-slate-200 hover:border-indigo-300"
-                        }`}
-                      >
-                        <span className="text-xl">
-                          {output.icon}
-                        </span>
-
-                        <span className="flex-1">
-                          <span
-                            className={`block text-sm font-bold ${
-                              isSelected
-                                ? "text-indigo-800"
-                                : "text-slate-900"
-                            }`}
-                          >
-                            {output.title}
-                          </span>
-
-                          <span className="mt-1 block text-xs leading-5 text-slate-500">
-                            {output.description}
-                          </span>
-                        </span>
-
-                        <span
-                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${
+                      return (
+                        <button
+                          key={
+                            output.id
+                          }
+                          type="button"
+                          aria-pressed={
                             isSelected
-                              ? "border-indigo-600 bg-indigo-600 text-white"
-                              : "border-slate-300 bg-white text-transparent"
+                          }
+                          disabled={
+                            controlsDisabled
+                          }
+                          onClick={() =>
+                            toggleOutput(
+                              output.id,
+                            )
+                          }
+                          className={`flex items-start gap-3 rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                            isSelected
+                              ? "border-indigo-500 bg-indigo-50"
+                              : "border-slate-200 hover:border-indigo-300"
                           }`}
                         >
-                          ✓
-                        </span>
-                      </button>
-                    );
-                  })}
+                          <span className="text-xl">
+                            {
+                              output.icon
+                            }
+                          </span>
+
+                          <span className="flex-1">
+                            <span
+                              className={`block text-sm font-bold ${
+                                isSelected
+                                  ? "text-indigo-800"
+                                  : "text-slate-900"
+                              }`}
+                            >
+                              {
+                                output.title
+                              }
+                            </span>
+
+                            <span className="mt-1 block text-xs leading-5 text-slate-500">
+                              {
+                                output.description
+                              }
+                            </span>
+                          </span>
+
+                          <span
+                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${
+                              isSelected
+                                ? "border-indigo-600 bg-indigo-600 text-white"
+                                : "border-slate-300 bg-white text-transparent"
+                            }`}
+                          >
+                            ✓
+                          </span>
+                        </button>
+                      );
+                    },
+                  )}
                 </div>
               </div>
             </section>
@@ -1106,7 +2004,8 @@ export default function StudyWorkspace() {
                   </p>
 
                   <p className="mt-1 font-bold capitalize text-slate-900">
-                    {inputMode === "voice"
+                    {inputMode ===
+                    "voice"
                       ? "Voice note"
                       : inputMode}
                   </p>
@@ -1129,7 +2028,9 @@ export default function StudyWorkspace() {
                     </p>
 
                     <p className="mt-1 text-sm font-bold capitalize text-slate-900">
-                      {educationLevel}
+                      {
+                        educationLevel
+                      }
                     </p>
                   </div>
 
@@ -1150,24 +2051,39 @@ export default function StudyWorkspace() {
                   </p>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {selectedOutputs.length > 0 ? (
-                      selectedOutputs.map((outputId) => {
-                        const output = studyOutputs.find(
-                          (item) => item.id === outputId,
-                        );
+                    {selectedOutputs.length >
+                    0 ? (
+                      selectedOutputs.map(
+                        (
+                          outputId,
+                        ) => {
+                          const output =
+                            studyOutputs.find(
+                              (
+                                item,
+                              ) =>
+                                item.id ===
+                                outputId,
+                            );
 
-                        return (
-                          <span
-                            key={outputId}
-                            className="rounded-full bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700"
-                          >
-                            {output?.title}
-                          </span>
-                        );
-                      })
+                          return (
+                            <span
+                              key={
+                                outputId
+                              }
+                              className="rounded-full bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700"
+                            >
+                              {
+                                output?.title
+                              }
+                            </span>
+                          );
+                        },
+                      )
                     ) : (
                       <span className="text-sm text-slate-500">
-                        No outputs selected
+                        No outputs
+                        selected
                       </span>
                     )}
                   </div>
@@ -1180,12 +2096,14 @@ export default function StudyWorkspace() {
                   className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4"
                 >
                   <p className="font-bold text-red-900">
-                    Recording in progress
+                    Recording in
+                    progress
                   </p>
 
                   <p className="mt-1 text-sm leading-6 text-red-700">
-                    Stop the recording before generating your
-                    study pack.
+                    Stop the recording
+                    before generating
+                    your study pack.
                   </p>
                 </div>
               )}
@@ -1193,34 +2111,115 @@ export default function StudyWorkspace() {
               {isGenerating && (
                 <div
                   role="status"
+                  aria-live="polite"
                   className="mt-6 rounded-xl border border-indigo-200 bg-indigo-50 p-4"
                 >
-                  <div className="flex items-start gap-3">
-                    <span className="mt-1 h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <span className="mt-1 h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
 
-                    <div>
-                      <p className="font-bold text-indigo-900">
-                        {generationMessage}
-                      </p>
+                      <div>
+                        <p className="font-bold text-indigo-950">
+                          {
+                            generationMessage
+                          }
+                        </p>
 
-                      <p className="mt-1 text-sm leading-6 text-indigo-700">
-                        {generationMessage.startsWith(
-                          "Transcribing",
-                        )
-                          ? "StudyVoice AI is converting the recording into written text."
-                          : "StudyVoice AI is preparing the selected learning resources."}
-                      </p>
+                        <p className="mt-1 text-sm leading-6 text-indigo-700">
+                          {generationPhase ===
+                          "transcribing"
+                            ? "Step 1 of 2: converting your recording into text."
+                            : inputMode ===
+                                "voice"
+                              ? "Step 2 of 2: creating your selected study materials."
+                              : "Creating your selected study materials."}
+                        </p>
+                      </div>
                     </div>
+
+                    <span className="shrink-0 font-mono text-sm font-bold text-indigo-700">
+                      {formatElapsedTime(
+                        elapsedSeconds,
+                      )}
+                    </span>
                   </div>
+
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-indigo-100">
+                    <div className="h-full w-2/3 animate-pulse rounded-full bg-indigo-600" />
+                  </div>
+
+                  {isTakingLong && (
+                    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-800">
+                      This is taking
+                      longer than usual.
+                      You may continue
+                      waiting or cancel
+                      and try a shorter
+                      input.
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={
+                      cancelActiveRequest
+                    }
+                    className="mt-4 text-sm font-bold text-red-600 hover:text-red-800"
+                  >
+                    Cancel request
+                  </button>
                 </div>
               )}
 
-              {errorMessage && (
+              {requestError && (
                 <div
                   role="alert"
-                  className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold leading-6 text-red-700"
+                  className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4"
                 >
-                  {errorMessage}
+                  <p className="font-bold text-red-900">
+                    Request unsuccessful
+                  </p>
+
+                  <p className="mt-2 text-sm font-semibold leading-6 text-red-800">
+                    {
+                      requestError.message
+                    }
+                  </p>
+
+                  <p className="mt-2 text-sm leading-6 text-red-700">
+                    {getRecoveryMessage(
+                      requestError.code,
+                    )}
+                  </p>
+
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    {requestError.retryable && (
+                      <button
+                        type="button"
+                        disabled={
+                          isGenerating
+                        }
+                        onClick={() =>
+                          void runGeneration()
+                        }
+                        className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Try again
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setRequestError(
+                          null,
+                        )
+                      }
+                      className="rounded-lg border border-red-300 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-100"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1236,15 +2235,20 @@ export default function StudyWorkspace() {
                     </p>
 
                     <p className="mt-2 text-sm leading-6 text-emerald-700">
-                      Your interactive study materials are
-                      displayed below.
+                      Your interactive
+                      study materials
+                      are displayed
+                      below.
                     </p>
                   </div>
                 )}
 
               <button
                 type="submit"
-                disabled={isGenerating || isRecording}
+                disabled={
+                  isGenerating ||
+                  isRecording
+                }
                 className="mt-6 w-full rounded-xl bg-indigo-600 px-5 py-3.5 font-bold text-white shadow-lg shadow-indigo-100 transition hover:-translate-y-0.5 hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
               >
                 {isRecording
@@ -1255,8 +2259,10 @@ export default function StudyWorkspace() {
               </button>
 
               <p className="mt-3 text-center text-xs leading-5 text-slate-500">
-                The 10 most recent study packs are saved in your
-                browser.
+                Requests can be
+                cancelled safely. Your
+                input remains available
+                for another attempt.
               </p>
             </div>
           </aside>
@@ -1272,11 +2278,13 @@ export default function StudyWorkspace() {
 
                 <div>
                   <p className="text-xs font-bold uppercase tracking-widest text-sky-700">
-                    Voice transcription
+                    Voice
+                    transcription
                   </p>
 
                   <h2 className="mt-1 text-2xl font-black text-slate-950">
-                    Recording transcript
+                    Recording
+                    transcript
                   </h2>
                 </div>
               </div>
@@ -1284,11 +2292,15 @@ export default function StudyWorkspace() {
               <div className="flex flex-wrap gap-2">
                 {transcript.language && (
                   <span className="rounded-full bg-sky-50 px-3 py-1.5 text-xs font-bold uppercase text-sky-700">
-                    Language: {transcript.language}
+                    Language:{" "}
+                    {
+                      transcript.language
+                    }
                   </span>
                 )}
 
-                {transcript.durationInSeconds !== null && (
+                {transcript.durationInSeconds !==
+                  null && (
                   <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700">
                     Duration:{" "}
                     {Math.round(
@@ -1315,16 +2327,28 @@ export default function StudyWorkspace() {
           >
             <StudyExportActions
               studyPack={studyPack}
-              generatedOutputs={generatedOutputs}
-              transcript={transcript}
-              sourceTitle={sourceTitle}
-              educationLevel={educationLevel}
-              difficulty={difficulty}
+              generatedOutputs={
+                generatedOutputs
+              }
+              transcript={
+                transcript
+              }
+              sourceTitle={
+                resultSourceTitle
+              }
+              educationLevel={
+                educationLevel
+              }
+              difficulty={
+                difficulty
+              }
             />
 
             <StudyResults
               studyPack={studyPack}
-              generatedOutputs={generatedOutputs}
+              generatedOutputs={
+                generatedOutputs
+              }
             />
           </div>
         )}

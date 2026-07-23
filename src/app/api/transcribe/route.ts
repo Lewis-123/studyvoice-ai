@@ -1,10 +1,19 @@
 import { openai } from "@ai-sdk/openai";
 import { transcribe } from "ai";
 
+import {
+  createAiErrorResponse,
+  createMissingApiKeyResponse,
+  createPublicErrorResponse,
+  createRequestAbortContext,
+  type RequestAbortContext,
+} from "@/lib/server-ai-error";
+
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MAX_AUDIO_SIZE = 20 * 1024 * 1024;
+const SERVER_TIMEOUT_MILLISECONDS = 55_000;
 
 const SUPPORTED_EXTENSIONS = new Set([
   "mp3",
@@ -17,90 +26,141 @@ const SUPPORTED_EXTENSIONS = new Set([
 ]);
 
 function getFileExtension(filename: string) {
-  return filename.split(".").pop()?.toLowerCase() ?? "";
+  return (
+    filename
+      .split(".")
+      .pop()
+      ?.trim()
+      .toLowerCase() ?? ""
+  );
 }
 
 export async function POST(request: Request) {
+  if (!process.env.OPENAI_API_KEY?.trim()) {
+    return createMissingApiKeyResponse();
+  }
+
+  let abortContext: RequestAbortContext | null =
+    null;
+
   try {
-    const formData = await request.formData();
-    const audioFile = formData.get("audio");
+    const formData =
+      await request.formData();
+
+    const audioFile =
+      formData.get("audio");
 
     if (!(audioFile instanceof File)) {
-      return Response.json(
-        {
-          error: "No audio file was provided.",
-        },
-        { status: 400 },
+      return createPublicErrorResponse(
+        "INVALID_REQUEST",
+        "No audio file was provided.",
+        400,
+        false,
       );
     }
 
     if (audioFile.size === 0) {
-      return Response.json(
-        {
-          error: "The selected audio file is empty.",
-        },
-        { status: 400 },
+      return createPublicErrorResponse(
+        "INVALID_REQUEST",
+        "The selected audio file is empty.",
+        400,
+        false,
       );
     }
 
     if (audioFile.size > MAX_AUDIO_SIZE) {
-      return Response.json(
-        {
-          error: "The audio file must be smaller than 20 MB.",
-        },
-        { status: 400 },
+      return createPublicErrorResponse(
+        "FILE_TOO_LARGE",
+        "The audio file must be smaller than 20 MB.",
+        413,
+        false,
       );
     }
 
-    const fileExtension = getFileExtension(audioFile.name);
+    const fileExtension =
+      getFileExtension(audioFile.name);
 
-    if (!SUPPORTED_EXTENSIONS.has(fileExtension)) {
-      return Response.json(
-        {
-          error:
-            "Unsupported audio format. Use MP3, MP4, MPEG, MPGA, M4A, WAV, or WebM.",
-        },
-        { status: 400 },
+    if (
+      !SUPPORTED_EXTENSIONS.has(fileExtension)
+    ) {
+      return createPublicErrorResponse(
+        "UNSUPPORTED_AUDIO",
+        "Unsupported audio format. Use MP3, MP4, MPEG, MPGA, M4A, WAV, or WebM.",
+        415,
+        false,
       );
     }
+
+    abortContext = createRequestAbortContext(
+      request.signal,
+      SERVER_TIMEOUT_MILLISECONDS,
+    );
 
     const audioBuffer = new Uint8Array(
       await audioFile.arrayBuffer(),
     );
 
     const transcription = await transcribe({
-      model: openai.transcription("gpt-4o-mini-transcribe"),
+      model: openai.transcription(
+        "gpt-4o-mini-transcribe",
+      ),
+
       audio: audioBuffer,
-      abortSignal: AbortSignal.timeout(55_000),
+      maxRetries: 1,
+      abortSignal: abortContext.signal,
     });
 
-    const transcriptText = transcription.text.trim();
+    const transcriptText =
+      transcription.text.trim();
 
     if (!transcriptText) {
-      return Response.json(
-        {
-          error:
-            "No speech could be detected in the selected recording.",
-        },
-        { status: 422 },
+      return createPublicErrorResponse(
+        "TRANSCRIPTION_FAILED",
+        "No understandable speech was detected in the recording.",
+        422,
+        true,
       );
     }
 
-    return Response.json({
-      text: transcriptText,
-      language: transcription.language ?? null,
-      durationInSeconds:
-        transcription.durationInSeconds ?? null,
-    });
-  } catch (error) {
-    console.error("Audio transcription failed:", error);
-
     return Response.json(
       {
-        error:
-          "The audio could not be transcribed. Check your API balance, audio format, and terminal output.",
+        text: transcriptText,
+        language:
+          transcription.language ?? null,
+        durationInSeconds:
+          transcription.durationInSeconds ??
+          null,
       },
-      { status: 500 },
+      {
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      },
     );
+  } catch (error) {
+    if (abortContext?.didTimeout()) {
+      return createPublicErrorResponse(
+        "REQUEST_TIMEOUT",
+        "Audio transcription exceeded the server time limit. Try a shorter recording.",
+        504,
+        true,
+      );
+    }
+
+    if (abortContext?.wasClientAborted()) {
+      return createPublicErrorResponse(
+        "REQUEST_CANCELLED",
+        "Audio transcription was cancelled.",
+        499,
+        true,
+      );
+    }
+
+    return createAiErrorResponse(
+      error,
+      "transcription",
+    );
+  } finally {
+    abortContext?.cleanup();
   }
 }

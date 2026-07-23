@@ -14,26 +14,67 @@ type VoiceRecorderProps = {
   onAudioReady: (file: File) => void;
   onRemove: () => void;
   onError: (message: string) => void;
-  onRecordingChange: (isRecording: boolean) => void;
+  onRecordingChange: (
+    isRecording: boolean,
+  ) => void;
 };
 
 const MAX_RECORDING_SECONDS = 5 * 60;
 
-function formatRecordingTime(totalSeconds: number) {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
+const SUPPORTED_EXTENSIONS = new Set([
+  "mp3",
+  "mp4",
+  "mpeg",
+  "mpga",
+  "m4a",
+  "wav",
+  "webm",
+]);
 
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+function formatRecordingTime(
+  totalSeconds: number,
+) {
+  const minutes = Math.floor(
+    totalSeconds / 60,
+  );
+
+  const seconds =
+    totalSeconds % 60;
+
+  return `${minutes}:${seconds
+    .toString()
+    .padStart(2, "0")}`;
 }
 
-function getSupportedMimeType() {
-  if (typeof MediaRecorder === "undefined") {
+function getFilenameExtension(
+  filename: string,
+) {
+  return (
+    filename
+      .split(".")
+      .pop()
+      ?.trim()
+      .toLowerCase() ?? ""
+  );
+}
+
+function isSupportedAudioFile(file: File) {
+  return SUPPORTED_EXTENSIONS.has(
+    getFilenameExtension(file.name),
+  );
+}
+
+function getSupportedRecordingMimeType() {
+  if (
+    typeof MediaRecorder === "undefined"
+  ) {
     return undefined;
   }
 
   const supportedTypes = [
     "audio/webm;codecs=opus",
     "audio/webm",
+    "audio/mp4;codecs=mp4a.40.2",
     "audio/mp4",
   ];
 
@@ -42,7 +83,9 @@ function getSupportedMimeType() {
   );
 }
 
-function getFileExtension(mimeType: string) {
+function getRecordingExtension(
+  mimeType: string,
+) {
   if (mimeType.includes("mp4")) {
     return "mp4";
   }
@@ -59,19 +102,32 @@ export default function VoiceRecorder({
   onError,
   onRecordingChange,
 }: VoiceRecorderProps) {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(
-    null,
-  );
+  const fileInputRef =
+    useRef<HTMLInputElement | null>(null);
 
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(
-    null,
-  );
+  const mediaRecorderRef =
+    useRef<MediaRecorder | null>(null);
+
+  const mediaStreamRef =
+    useRef<MediaStream | null>(null);
+
+  const audioChunksRef =
+    useRef<Blob[]>([]);
+
+  const timerRef = useRef<
+    ReturnType<typeof setInterval> | null
+  >(null);
+
+  const [isRecording, setIsRecording] =
+    useState(false);
+
+  const [
+    recordingSeconds,
+    setRecordingSeconds,
+  ] = useState(0);
+
+  const [previewUrl, setPreviewUrl] =
+    useState<string | null>(null);
 
   useEffect(() => {
     if (!audioFile) {
@@ -79,11 +135,15 @@ export default function VoiceRecorder({
       return;
     }
 
-    const nextPreviewUrl = URL.createObjectURL(audioFile);
+    const nextPreviewUrl =
+      URL.createObjectURL(audioFile);
+
     setPreviewUrl(nextPreviewUrl);
 
     return () => {
-      URL.revokeObjectURL(nextPreviewUrl);
+      URL.revokeObjectURL(
+        nextPreviewUrl,
+      );
     };
   }, [audioFile]);
 
@@ -91,9 +151,13 @@ export default function VoiceRecorder({
     return () => {
       stopTimer();
 
-      const recorder = mediaRecorderRef.current;
+      const recorder =
+        mediaRecorderRef.current;
 
-      if (recorder && recorder.state !== "inactive") {
+      if (
+        recorder &&
+        recorder.state !== "inactive"
+      ) {
         recorder.ondataavailable = null;
         recorder.onstop = null;
         recorder.onerror = null;
@@ -114,20 +178,28 @@ export default function VoiceRecorder({
   function stopMediaStream() {
     mediaStreamRef.current
       ?.getTracks()
-      .forEach((track) => track.stop());
+      .forEach((track) =>
+        track.stop(),
+      );
 
     mediaStreamRef.current = null;
   }
 
-  function updateRecordingState(recording: boolean) {
+  function updateRecordingState(
+    recording: boolean,
+  ) {
     setIsRecording(recording);
     onRecordingChange(recording);
   }
 
   function finishRecording() {
-    const recorder = mediaRecorderRef.current;
+    const recorder =
+      mediaRecorderRef.current;
 
-    if (!recorder || recorder.state === "inactive") {
+    if (
+      !recorder ||
+      recorder.state === "inactive"
+    ) {
       return;
     }
 
@@ -139,12 +211,14 @@ export default function VoiceRecorder({
 
     if (
       typeof navigator === "undefined" ||
-      !navigator.mediaDevices?.getUserMedia ||
+      !navigator.mediaDevices
+        ?.getUserMedia ||
       typeof MediaRecorder === "undefined"
     ) {
       onError(
-        "This browser does not support microphone recording. Upload an audio file instead.",
+        "This browser does not support microphone recording. Upload a supported audio file instead.",
       );
+
       return;
     }
 
@@ -154,29 +228,46 @@ export default function VoiceRecorder({
       onRemove();
 
       const mediaStream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
+        await navigator.mediaDevices.getUserMedia(
+          {
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+            },
           },
-        });
+        );
 
-      mediaStreamRef.current = mediaStream;
+      mediaStreamRef.current =
+        mediaStream;
+
       audioChunksRef.current = [];
 
-      const supportedMimeType = getSupportedMimeType();
+      const supportedMimeType =
+        getSupportedRecordingMimeType();
 
-      const recorder = supportedMimeType
-        ? new MediaRecorder(mediaStream, {
-            mimeType: supportedMimeType,
-          })
-        : new MediaRecorder(mediaStream);
+      const recorder =
+        supportedMimeType
+          ? new MediaRecorder(
+              mediaStream,
+              {
+                mimeType:
+                  supportedMimeType,
+              },
+            )
+          : new MediaRecorder(
+              mediaStream,
+            );
 
-      mediaRecorderRef.current = recorder;
+      mediaRecorderRef.current =
+        recorder;
 
-      recorder.ondataavailable = (event) => {
+      recorder.ondataavailable = (
+        event,
+      ) => {
         if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+          audioChunksRef.current.push(
+            event.data,
+          );
         }
       };
 
@@ -186,7 +277,7 @@ export default function VoiceRecorder({
         updateRecordingState(false);
 
         onError(
-          "A recording error occurred. Check your microphone and try again.",
+          "A microphone recording error occurred. Check your microphone and try again.",
         );
       };
 
@@ -200,38 +291,50 @@ export default function VoiceRecorder({
           supportedMimeType ||
           "audio/webm";
 
-        const recordingBlob = new Blob(
-          audioChunksRef.current,
-          {
-            type: finalMimeType,
-          },
-        );
+        const recordingBlob =
+          new Blob(
+            audioChunksRef.current,
+            {
+              type: finalMimeType,
+            },
+          );
 
         audioChunksRef.current = [];
 
-        if (recordingBlob.size === 0) {
+        if (
+          recordingBlob.size === 0
+        ) {
           onError(
             "The recording was empty. Check your microphone and try again.",
           );
+
           return;
         }
 
-        if (recordingBlob.size > maxAudioSize) {
+        if (
+          recordingBlob.size >
+          maxAudioSize
+        ) {
           onError(
             "The recording is larger than the 20 MB limit. Record a shorter voice note.",
           );
+
           return;
         }
 
-        const extension = getFileExtension(finalMimeType);
+        const extension =
+          getRecordingExtension(
+            finalMimeType,
+          );
 
-        const recordingFile = new File(
-          [recordingBlob],
-          `studyvoice-recording-${Date.now()}.${extension}`,
-          {
-            type: finalMimeType,
-          },
-        );
+        const recordingFile =
+          new File(
+            [recordingBlob],
+            `studyvoice-recording-${Date.now()}.${extension}`,
+            {
+              type: finalMimeType,
+            },
+          );
 
         onAudioReady(recordingFile);
       };
@@ -241,44 +344,66 @@ export default function VoiceRecorder({
       setRecordingSeconds(0);
       updateRecordingState(true);
 
-      timerRef.current = setInterval(() => {
-        setRecordingSeconds((currentSeconds) => {
-          const nextSeconds = currentSeconds + 1;
+      timerRef.current = setInterval(
+        () => {
+          setRecordingSeconds(
+            (currentSeconds) => {
+              const nextSeconds =
+                currentSeconds + 1;
 
-          if (nextSeconds >= MAX_RECORDING_SECONDS) {
-            finishRecording();
-          }
+              if (
+                nextSeconds >=
+                MAX_RECORDING_SECONDS
+              ) {
+                finishRecording();
+              }
 
-          return nextSeconds;
-        });
-      }, 1000);
+              return nextSeconds;
+            },
+          );
+        },
+        1000,
+      );
     } catch (error) {
       stopTimer();
       stopMediaStream();
       updateRecordingState(false);
 
-      if (error instanceof DOMException) {
+      if (
+        error instanceof DOMException
+      ) {
         if (
-          error.name === "NotAllowedError" ||
-          error.name === "SecurityError"
+          error.name ===
+            "NotAllowedError" ||
+          error.name ===
+            "SecurityError"
         ) {
           onError(
-            "Microphone permission was denied. Allow microphone access in your browser or upload an audio file.",
+            "Microphone permission was denied. Allow microphone access in the browser or upload an audio file.",
           );
+
           return;
         }
 
-        if (error.name === "NotFoundError") {
+        if (
+          error.name ===
+          "NotFoundError"
+        ) {
           onError(
             "No microphone was detected on this device.",
           );
+
           return;
         }
 
-        if (error.name === "NotReadableError") {
+        if (
+          error.name ===
+          "NotReadableError"
+        ) {
           onError(
             "The microphone is already being used by another application.",
           );
+
           return;
         }
       }
@@ -290,20 +415,28 @@ export default function VoiceRecorder({
   }
 
   function cancelRecording() {
-    const recorder = mediaRecorderRef.current;
+    const recorder =
+      mediaRecorderRef.current;
 
     if (recorder) {
-      recorder.ondataavailable = null;
+      recorder.ondataavailable =
+        null;
+
       recorder.onstop = null;
 
-      if (recorder.state !== "inactive") {
+      if (
+        recorder.state !==
+        "inactive"
+      ) {
         recorder.stop();
       }
     }
 
     audioChunksRef.current = [];
+
     stopTimer();
     stopMediaStream();
+
     setRecordingSeconds(0);
     updateRecordingState(false);
   }
@@ -311,7 +444,8 @@ export default function VoiceRecorder({
   function handleFileSelection(
     event: ChangeEvent<HTMLInputElement>,
   ) {
-    const selectedFile = event.target.files?.[0];
+    const selectedFile =
+      event.target.files?.[0];
 
     onError("");
 
@@ -319,21 +453,40 @@ export default function VoiceRecorder({
       return;
     }
 
-    if (!selectedFile.type.startsWith("audio/")) {
+    if (
+      !isSupportedAudioFile(
+        selectedFile,
+      )
+    ) {
       event.target.value = "";
 
       onError(
-        "Please select a valid MP3, MP4, M4A, WAV, MPEG, MPGA, or WebM audio file.",
+        "Unsupported audio format. Use MP3, MP4, MPEG, MPGA, M4A, WAV, or WebM.",
       );
+
       return;
     }
 
-    if (selectedFile.size > maxAudioSize) {
+    if (selectedFile.size === 0) {
+      event.target.value = "";
+
+      onError(
+        "The selected audio file is empty.",
+      );
+
+      return;
+    }
+
+    if (
+      selectedFile.size >
+      maxAudioSize
+    ) {
       event.target.value = "";
 
       onError(
         "The selected audio file is larger than the 20 MB limit.",
       );
+
       return;
     }
 
@@ -344,7 +497,8 @@ export default function VoiceRecorder({
     onRemove();
 
     if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+      fileInputRef.current.value =
+        "";
     }
   }
 
@@ -360,17 +514,22 @@ export default function VoiceRecorder({
                   : "bg-white"
               }`}
             >
-              {isRecording ? "🔴" : "🎙️"}
+              {isRecording
+                ? "🔴"
+                : "🎙️"}
             </span>
 
             <div>
               <h3 className="font-bold text-slate-950">
-                Record with your microphone
+                Record with your
+                microphone
               </h3>
 
               <p className="mt-1 text-sm leading-6 text-slate-600">
-                Record a lecture summary, personal explanation,
-                or revision note directly in the browser.
+                Record a lecture summary,
+                personal explanation, or
+                revision note directly in
+                the browser.
               </p>
             </div>
           </div>
@@ -403,6 +562,7 @@ export default function VoiceRecorder({
             <div className="flex items-center gap-3">
               <span className="relative flex h-3 w-3">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+
                 <span className="relative inline-flex h-3 w-3 rounded-full bg-red-600" />
               </span>
 
@@ -412,7 +572,9 @@ export default function VoiceRecorder({
                 </p>
 
                 <p className="mt-1 font-mono text-lg font-black text-slate-950">
-                  {formatRecordingTime(recordingSeconds)}
+                  {formatRecordingTime(
+                    recordingSeconds,
+                  )}
                 </p>
               </div>
             </div>
@@ -428,16 +590,20 @@ export default function VoiceRecorder({
         )}
 
         <p className="mt-4 text-xs leading-5 text-slate-500">
-          Maximum recording time: 5 minutes. Your browser will
-          request permission before accessing the microphone.
+          Maximum recording time: 5
+          minutes. Your browser will request
+          microphone permission before
+          recording.
         </p>
       </section>
 
       <div className="flex items-center gap-4">
         <div className="h-px flex-1 bg-slate-200" />
+
         <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
           Or upload audio
         </span>
+
         <div className="h-px flex-1 bg-slate-200" />
       </div>
 
@@ -449,14 +615,17 @@ export default function VoiceRecorder({
             : "cursor-pointer border-slate-300 bg-slate-50 hover:border-indigo-400 hover:bg-indigo-50"
         }`}
       >
-        <span className="block text-3xl">🎧</span>
+        <span className="block text-3xl">
+          🎧
+        </span>
 
         <span className="mt-3 block font-bold text-slate-900">
           Select an existing audio file
         </span>
 
         <span className="mt-2 block text-sm text-slate-500">
-          MP3, MP4, M4A, WAV, MPEG, MPGA, or WebM
+          MP3, MP4, M4A, WAV, MPEG, MPGA,
+          or WebM
         </span>
 
         <span className="mt-4 inline-block rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
@@ -468,8 +637,10 @@ export default function VoiceRecorder({
         ref={fileInputRef}
         id="audio-file"
         type="file"
-        accept=".mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm,audio/*"
-        disabled={disabled || isRecording}
+        accept=".mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm"
+        disabled={
+          disabled || isRecording
+        }
         onChange={handleFileSelection}
         className="sr-only"
       />
@@ -483,14 +654,23 @@ export default function VoiceRecorder({
               </p>
 
               <p className="mt-1 text-xs text-emerald-700">
-                {(audioFile.size / 1024 / 1024).toFixed(2)} MB
+                {(
+                  audioFile.size /
+                  1024 /
+                  1024
+                ).toFixed(2)}{" "}
+                MB
               </p>
             </div>
 
             <button
               type="button"
-              disabled={disabled || isRecording}
-              onClick={removeSelectedAudio}
+              disabled={
+                disabled || isRecording
+              }
+              onClick={
+                removeSelectedAudio
+              }
               className="shrink-0 text-sm font-bold text-emerald-800 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Remove
@@ -504,7 +684,8 @@ export default function VoiceRecorder({
               src={previewUrl}
               className="mt-4 w-full"
             >
-              Your browser does not support audio playback.
+              Your browser does not support
+              audio playback.
             </audio>
           )}
         </section>
