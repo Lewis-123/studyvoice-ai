@@ -3,16 +3,23 @@
 import Link from "next/link";
 import {
   useMemo,
-  useRef,
   useState,
-  type ChangeEvent,
   type FormEvent,
 } from "react";
 
 import StudyResults from "@/components/study-results";
+import VoiceRecorder from "@/components/voice-recorder";
 import type { OutputId, StudyPack } from "@/lib/study-schema";
 
 type InputMode = "topic" | "notes" | "voice";
+
+type EducationLevel =
+  | "beginner"
+  | "secondary"
+  | "college"
+  | "advanced";
+
+type QuizDifficulty = "easy" | "medium" | "challenging";
 
 type TranscriptResult = {
   text: string;
@@ -50,7 +57,7 @@ const inputModes: Array<{
   {
     id: "voice",
     title: "Voice note",
-    description: "Upload an audio recording for transcription.",
+    description: "Record or upload audio for transcription.",
     icon: "🎙️",
   },
 ];
@@ -101,16 +108,36 @@ const defaultOutputs: OutputId[] = [
   "quiz",
 ];
 
-export default function StudyWorkspace() {
-  const audioInputRef = useRef<HTMLInputElement | null>(null);
+function getApiErrorMessage(
+  responseData: unknown,
+  fallbackMessage: string,
+) {
+  if (
+    typeof responseData === "object" &&
+    responseData !== null &&
+    "error" in responseData &&
+    typeof responseData.error === "string"
+  ) {
+    return responseData.error;
+  }
 
-  const [inputMode, setInputMode] = useState<InputMode>("topic");
+  return fallbackMessage;
+}
+
+export default function StudyWorkspace() {
+  const [inputMode, setInputMode] =
+    useState<InputMode>("topic");
+
   const [topic, setTopic] = useState("");
   const [notes, setNotes] = useState("");
-  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioFile, setAudioFile] =
+    useState<File | null>(null);
 
-  const [educationLevel, setEducationLevel] = useState("beginner");
-  const [difficulty, setDifficulty] = useState("medium");
+  const [educationLevel, setEducationLevel] =
+    useState<EducationLevel>("beginner");
+
+  const [difficulty, setDifficulty] =
+    useState<QuizDifficulty>("medium");
 
   const [selectedOutputs, setSelectedOutputs] =
     useState<OutputId[]>(defaultOutputs);
@@ -118,19 +145,21 @@ export default function StudyWorkspace() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isPrepared, setIsPrepared] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
 
-  const [generationMessage, setGenerationMessage] = useState(
-    "Generating study pack...",
-  );
+  const [generationMessage, setGenerationMessage] =
+    useState("Generating study pack...");
 
   const [transcript, setTranscript] =
     useState<TranscriptResult | null>(null);
 
-  const [studyPack, setStudyPack] = useState<StudyPack | null>(null);
+  const [studyPack, setStudyPack] =
+    useState<StudyPack | null>(null);
 
-  const [generatedOutputs, setGeneratedOutputs] = useState<
-    OutputId[]
-  >([]);
+  const [generatedOutputs, setGeneratedOutputs] =
+    useState<OutputId[]>([]);
+
+  const controlsDisabled = isGenerating || isRecording;
 
   const sourceTitle = useMemo(() => {
     if (inputMode === "topic") {
@@ -149,7 +178,7 @@ export default function StudyWorkspace() {
         : cleanNotes;
     }
 
-    return audioFile?.name ?? "No audio file selected";
+    return audioFile?.name ?? "No audio recording selected";
   }, [audioFile, inputMode, notes, topic]);
 
   function clearStatusMessages() {
@@ -162,10 +191,18 @@ export default function StudyWorkspace() {
     setGeneratedOutputs([]);
   }
 
-  function selectInputMode(mode: InputMode) {
-    setInputMode(mode);
+  function resetGeneratedResults() {
     clearStatusMessages();
     clearGeneratedContent();
+  }
+
+  function selectInputMode(mode: InputMode) {
+    if (isGenerating || isRecording) {
+      return;
+    }
+
+    setInputMode(mode);
+    resetGeneratedResults();
 
     if (mode !== "voice") {
       setTranscript(null);
@@ -173,67 +210,92 @@ export default function StudyWorkspace() {
   }
 
   function toggleOutput(outputId: OutputId) {
+    if (controlsDisabled) {
+      return;
+    }
+
     setSelectedOutputs((currentOutputs) => {
       if (currentOutputs.includes(outputId)) {
-        return currentOutputs.filter((item) => item !== outputId);
+        return currentOutputs.filter(
+          (item) => item !== outputId,
+        );
       }
 
       return [...currentOutputs, outputId];
     });
 
-    clearStatusMessages();
-    clearGeneratedContent();
+    resetGeneratedResults();
   }
 
   function selectAllOutputs() {
-    setSelectedOutputs(studyOutputs.map((output) => output.id));
-    clearStatusMessages();
-    clearGeneratedContent();
+    if (controlsDisabled) {
+      return;
+    }
+
+    setSelectedOutputs(
+      studyOutputs.map((output) => output.id),
+    );
+
+    resetGeneratedResults();
   }
 
-  function handleAudioChange(event: ChangeEvent<HTMLInputElement>) {
-    const selectedFile = event.target.files?.[0];
-
+  function handleVoiceFileReady(file: File) {
     clearStatusMessages();
     clearGeneratedContent();
     setTranscript(null);
 
-    if (!selectedFile) {
+    if (!file.type.startsWith("audio/")) {
       setAudioFile(null);
-      return;
-    }
-
-    if (!selectedFile.type.startsWith("audio/")) {
-      setAudioFile(null);
-      event.target.value = "";
       setErrorMessage(
-        "Please select a valid MP3, MP4, M4A, WAV, MPEG, MPGA, or WebM audio file.",
+        "Please select a valid audio recording.",
       );
       return;
     }
 
-    if (selectedFile.size > MAX_AUDIO_SIZE) {
+    if (file.size === 0) {
       setAudioFile(null);
-      event.target.value = "";
+      setErrorMessage(
+        "The selected audio recording is empty.",
+      );
+      return;
+    }
+
+    if (file.size > MAX_AUDIO_SIZE) {
+      setAudioFile(null);
       setErrorMessage(
         "The selected audio file is larger than the 20 MB limit.",
       );
       return;
     }
 
-    setAudioFile(selectedFile);
+    setAudioFile(file);
   }
 
-  function removeAudioFile() {
+  function handleVoiceFileRemove() {
     setAudioFile(null);
     setTranscript(null);
     clearGeneratedContent();
-
-    if (audioInputRef.current) {
-      audioInputRef.current.value = "";
-    }
-
     clearStatusMessages();
+  }
+
+  function handleVoiceError(message: string) {
+    setErrorMessage(message);
+    setIsPrepared(false);
+
+    if (message) {
+      clearGeneratedContent();
+    }
+  }
+
+  function handleRecordingChange(recording: boolean) {
+    setIsRecording(recording);
+
+    if (recording) {
+      setErrorMessage("");
+      setIsPrepared(false);
+      setTranscript(null);
+      clearGeneratedContent();
+    }
   }
 
   function validateInput() {
@@ -246,7 +308,7 @@ export default function StudyWorkspace() {
     }
 
     if (inputMode === "voice" && !audioFile) {
-      return "Select an audio file before continuing.";
+      return "Record or select an audio file before continuing.";
     }
 
     if (selectedOutputs.length === 0) {
@@ -256,8 +318,112 @@ export default function StudyWorkspace() {
     return "";
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function transcribeAudio(file: File) {
+    setGenerationMessage("Transcribing voice note...");
+    setTranscript(null);
+
+    const formData = new FormData();
+    formData.append("audio", file);
+
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      body: formData,
+    });
+
+    const responseData: unknown = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        getApiErrorMessage(
+          responseData,
+          "The voice note could not be transcribed.",
+        ),
+      );
+    }
+
+    if (
+      typeof responseData !== "object" ||
+      responseData === null ||
+      !("text" in responseData) ||
+      typeof responseData.text !== "string"
+    ) {
+      throw new Error(
+        "The transcription service returned an invalid response.",
+      );
+    }
+
+    const transcriptResult: TranscriptResult = {
+      text: responseData.text.trim(),
+
+      language:
+        "language" in responseData &&
+        typeof responseData.language === "string"
+          ? responseData.language
+          : null,
+
+      durationInSeconds:
+        "durationInSeconds" in responseData &&
+        typeof responseData.durationInSeconds === "number"
+          ? responseData.durationInSeconds
+          : null,
+    };
+
+    if (transcriptResult.text.length < 3) {
+      throw new Error(
+        "No clear speech was detected in the recording.",
+      );
+    }
+
+    setTranscript(transcriptResult);
+
+    return transcriptResult;
+  }
+
+  async function generateStudyPack(
+    studyInputMode: "topic" | "notes",
+    content: string,
+  ) {
+    setGenerationMessage("Generating study pack...");
+
+    const response = await fetch("/api/study", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        inputMode: studyInputMode,
+        content,
+        educationLevel,
+        difficulty,
+        selectedOutputs,
+      }),
+    });
+
+    const responseData: unknown = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        getApiErrorMessage(
+          responseData,
+          "The study pack could not be generated.",
+        ),
+      );
+    }
+
+    return responseData as StudyPack;
+  }
+
+  async function handleSubmit(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
+
+    if (isRecording) {
+      setErrorMessage(
+        "Stop the recording before generating the study pack.",
+      );
+      return;
+    }
 
     const validationError = validateInput();
 
@@ -274,126 +440,35 @@ export default function StudyWorkspace() {
     setGeneratedOutputs([]);
 
     try {
-      let content: string;
       let studyInputMode: "topic" | "notes";
+      let content: string;
 
       if (inputMode === "voice") {
         if (!audioFile) {
           throw new Error(
-            "Select an audio file before continuing.",
+            "Record or select an audio file before continuing.",
           );
         }
 
-        setGenerationMessage("Transcribing voice note...");
-        setTranscript(null);
+        const transcriptResult =
+          await transcribeAudio(audioFile);
 
-        const formData = new FormData();
-        formData.append("audio", audioFile);
-
-        const transcriptionResponse = await fetch(
-          "/api/transcribe",
-          {
-            method: "POST",
-            body: formData,
-          },
-        );
-
-        const transcriptionData: unknown =
-          await transcriptionResponse.json();
-
-        if (!transcriptionResponse.ok) {
-          const transcriptionError =
-            typeof transcriptionData === "object" &&
-            transcriptionData !== null &&
-            "error" in transcriptionData &&
-            typeof transcriptionData.error === "string"
-              ? transcriptionData.error
-              : "The voice note could not be transcribed.";
-
-          throw new Error(transcriptionError);
-        }
-
-        if (
-          typeof transcriptionData !== "object" ||
-          transcriptionData === null ||
-          !("text" in transcriptionData) ||
-          typeof transcriptionData.text !== "string"
-        ) {
-          throw new Error(
-            "The transcription service returned an invalid response.",
-          );
-        }
-
-        const transcriptResult: TranscriptResult = {
-          text: transcriptionData.text,
-          language:
-            "language" in transcriptionData &&
-            typeof transcriptionData.language === "string"
-              ? transcriptionData.language
-              : null,
-          durationInSeconds:
-            "durationInSeconds" in transcriptionData &&
-            typeof transcriptionData.durationInSeconds ===
-              "number"
-              ? transcriptionData.durationInSeconds
-              : null,
-        };
-
-        if (transcriptResult.text.trim().length < 3) {
-          throw new Error(
-            "No clear speech was detected in the recording.",
-          );
-        }
-
-        setTranscript(transcriptResult);
-
-        content = transcriptResult.text.trim();
         studyInputMode = "notes";
-
-        setGenerationMessage("Generating study pack...");
+        content = transcriptResult.text;
       } else {
         setTranscript(null);
 
+        studyInputMode = inputMode;
         content =
           inputMode === "topic"
             ? topic.trim()
             : notes.trim();
-
-        studyInputMode = inputMode;
-
-        setGenerationMessage("Generating study pack...");
       }
 
-      const studyResponse = await fetch("/api/study", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          inputMode: studyInputMode,
-          content,
-          educationLevel,
-          difficulty,
-          selectedOutputs,
-        }),
-      });
+      const generatedStudyPack =
+        await generateStudyPack(studyInputMode, content);
 
-      const studyResponseData: unknown =
-        await studyResponse.json();
-
-      if (!studyResponse.ok) {
-        const apiError =
-          typeof studyResponseData === "object" &&
-          studyResponseData !== null &&
-          "error" in studyResponseData &&
-          typeof studyResponseData.error === "string"
-            ? studyResponseData.error
-            : "The study pack could not be generated.";
-
-        throw new Error(apiError);
-      }
-
-      setStudyPack(studyResponseData as StudyPack);
+      setStudyPack(generatedStudyPack);
       setGeneratedOutputs([...selectedOutputs]);
       setIsPrepared(true);
     } catch (error) {
@@ -450,9 +525,9 @@ export default function StudyWorkspace() {
           </h1>
 
           <p className="mt-3 max-w-3xl leading-7 text-slate-600">
-            Enter a topic, paste notes, or upload a voice
-            recording. Choose the learning materials that
-            StudyVoice AI should prepare.
+            Enter a topic, paste notes, record your voice, or
+            upload an audio file. StudyVoice AI will transform
+            the material into interactive learning resources.
           </p>
         </div>
 
@@ -486,8 +561,10 @@ export default function StudyWorkspace() {
                       type="button"
                       role="tab"
                       aria-selected={isActive}
-                      disabled={isGenerating}
-                      onClick={() => selectInputMode(mode.id)}
+                      disabled={controlsDisabled}
+                      onClick={() =>
+                        selectInputMode(mode.id)
+                      }
                       className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
                         isActive
                           ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500"
@@ -530,11 +607,11 @@ export default function StudyWorkspace() {
                       id="study-topic"
                       type="text"
                       value={topic}
-                      disabled={isGenerating}
+                      disabled={controlsDisabled}
                       onChange={(event) => {
                         setTopic(event.target.value);
-                        clearStatusMessages();
-                        clearGeneratedContent();
+                        setTranscript(null);
+                        resetGeneratedResults();
                       }}
                       placeholder="Example: Explain JavaScript promises to a beginner"
                       className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
@@ -565,11 +642,11 @@ export default function StudyWorkspace() {
                     <textarea
                       id="study-notes"
                       value={notes}
-                      disabled={isGenerating}
+                      disabled={controlsDisabled}
                       onChange={(event) => {
                         setNotes(event.target.value);
-                        clearStatusMessages();
-                        clearGeneratedContent();
+                        setTranscript(null);
+                        resetGeneratedResults();
                       }}
                       placeholder="Paste lecture notes, textbook content, or revision material here..."
                       rows={10}
@@ -579,76 +656,17 @@ export default function StudyWorkspace() {
                 )}
 
                 {inputMode === "voice" && (
-                  <div>
-                    <label
-                      htmlFor="audio-file"
-                      className={`block rounded-2xl border-2 border-dashed px-6 py-10 text-center transition ${
-                        isGenerating
-                          ? "cursor-not-allowed border-slate-200 bg-slate-100 opacity-70"
-                          : "cursor-pointer border-slate-300 bg-slate-50 hover:border-indigo-400 hover:bg-indigo-50"
-                      }`}
-                    >
-                      <span className="block text-4xl">
-                        🎧
-                      </span>
-
-                      <span className="mt-4 block font-bold text-slate-900">
-                        Select an audio recording
-                      </span>
-
-                      <span className="mt-2 block text-sm text-slate-500">
-                        Choose a lecture, discussion, or personal
-                        voice note
-                      </span>
-
-                      <span className="mt-2 block text-xs text-slate-400">
-                        MP3, MP4, M4A, WAV, MPEG, MPGA or WebM,
-                        maximum 20 MB
-                      </span>
-
-                      <span className="mt-4 inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
-                        Browse audio files
-                      </span>
-                    </label>
-
-                    <input
-                      ref={audioInputRef}
-                      id="audio-file"
-                      type="file"
-                      accept=".mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm,audio/*"
-                      disabled={isGenerating}
-                      onChange={handleAudioChange}
-                      className="sr-only"
-                    />
-
-                    {audioFile && (
-                      <div className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-emerald-900">
-                            {audioFile.name}
-                          </p>
-
-                          <p className="mt-1 text-xs text-emerald-700">
-                            {(
-                              audioFile.size /
-                              1024 /
-                              1024
-                            ).toFixed(2)}{" "}
-                            MB
-                          </p>
-                        </div>
-
-                        <button
-                          type="button"
-                          disabled={isGenerating}
-                          onClick={removeAudioFile}
-                          className="shrink-0 text-sm font-bold text-emerald-800 hover:text-emerald-950 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <VoiceRecorder
+                    audioFile={audioFile}
+                    disabled={isGenerating}
+                    maxAudioSize={MAX_AUDIO_SIZE}
+                    onAudioReady={handleVoiceFileReady}
+                    onRemove={handleVoiceFileRemove}
+                    onError={handleVoiceError}
+                    onRecordingChange={
+                      handleRecordingChange
+                    }
+                  />
                 )}
               </div>
             </section>
@@ -676,11 +694,14 @@ export default function StudyWorkspace() {
                   <select
                     id="education-level"
                     value={educationLevel}
-                    disabled={isGenerating}
+                    disabled={controlsDisabled}
                     onChange={(event) => {
-                      setEducationLevel(event.target.value);
-                      clearStatusMessages();
-                      clearGeneratedContent();
+                      setEducationLevel(
+                        event.target
+                          .value as EducationLevel,
+                      );
+
+                      resetGeneratedResults();
                     }}
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                   >
@@ -713,11 +734,14 @@ export default function StudyWorkspace() {
                   <select
                     id="quiz-difficulty"
                     value={difficulty}
-                    disabled={isGenerating}
+                    disabled={controlsDisabled}
                     onChange={(event) => {
-                      setDifficulty(event.target.value);
-                      clearStatusMessages();
-                      clearGeneratedContent();
+                      setDifficulty(
+                        event.target
+                          .value as QuizDifficulty,
+                      );
+
+                      resetGeneratedResults();
                     }}
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                   >
@@ -746,7 +770,7 @@ export default function StudyWorkspace() {
 
                   <button
                     type="button"
-                    disabled={isGenerating}
+                    disabled={controlsDisabled}
                     onClick={selectAllOutputs}
                     className="text-sm font-bold text-indigo-600 hover:text-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -764,7 +788,7 @@ export default function StudyWorkspace() {
                         key={output.id}
                         type="button"
                         aria-pressed={isSelected}
-                        disabled={isGenerating}
+                        disabled={controlsDisabled}
                         onClick={() =>
                           toggleOutput(output.id)
                         }
@@ -826,12 +850,18 @@ export default function StudyWorkspace() {
 
                 <div
                   className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
-                    isGenerating
-                      ? "bg-amber-50 text-amber-700"
-                      : "bg-emerald-50 text-emerald-700"
+                    isRecording
+                      ? "bg-red-50 text-red-700"
+                      : isGenerating
+                        ? "bg-amber-50 text-amber-700"
+                        : "bg-emerald-50 text-emerald-700"
                   }`}
                 >
-                  {isGenerating ? "AI working" : "AI ready"}
+                  {isRecording
+                    ? "Recording"
+                    : isGenerating
+                      ? "AI working"
+                      : "AI ready"}
                 </div>
               </div>
 
@@ -889,7 +919,8 @@ export default function StudyWorkspace() {
                     {selectedOutputs.length > 0 ? (
                       selectedOutputs.map((outputId) => {
                         const output = studyOutputs.find(
-                          (item) => item.id === outputId,
+                          (item) =>
+                            item.id === outputId,
                         );
 
                         return (
@@ -909,6 +940,22 @@ export default function StudyWorkspace() {
                   </div>
                 </div>
               </div>
+
+              {isRecording && (
+                <div
+                  role="status"
+                  className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4"
+                >
+                  <p className="font-bold text-red-900">
+                    Recording in progress
+                  </p>
+
+                  <p className="mt-1 text-sm leading-6 text-red-700">
+                    Stop the recording before generating your
+                    study pack.
+                  </p>
+                </div>
+              )}
 
               {isGenerating && (
                 <div
@@ -944,35 +991,39 @@ export default function StudyWorkspace() {
                 </div>
               )}
 
-              {isPrepared && !isGenerating && (
-                <div
-                  role="status"
-                  className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4"
-                >
-                  <p className="font-bold text-emerald-900">
-                    Study pack generated successfully
-                  </p>
+              {isPrepared &&
+                !isGenerating &&
+                !isRecording && (
+                  <div
+                    role="status"
+                    className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4"
+                  >
+                    <p className="font-bold text-emerald-900">
+                      Study pack generated successfully
+                    </p>
 
-                  <p className="mt-2 text-sm leading-6 text-emerald-700">
-                    Your interactive study materials are
-                    displayed below.
-                  </p>
-                </div>
-              )}
+                    <p className="mt-2 text-sm leading-6 text-emerald-700">
+                      Your interactive study materials are
+                      displayed below.
+                    </p>
+                  </div>
+                )}
 
               <button
                 type="submit"
-                disabled={isGenerating}
+                disabled={isGenerating || isRecording}
                 className="mt-6 w-full rounded-xl bg-indigo-600 px-5 py-3.5 font-bold text-white shadow-lg shadow-indigo-100 transition hover:-translate-y-0.5 hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
               >
-                {isGenerating
-                  ? generationMessage
-                  : "Generate study pack"}
+                {isRecording
+                  ? "Stop recording before generating"
+                  : isGenerating
+                    ? generationMessage
+                    : "Generate study pack"}
               </button>
 
               <p className="mt-3 text-center text-xs leading-5 text-slate-500">
-                Generate learning materials from topics, written
-                notes, or uploaded voice recordings.
+                Generate interactive learning materials from a
+                topic, written notes, or a voice recording.
               </p>
             </div>
           </aside>
