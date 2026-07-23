@@ -8,6 +8,7 @@ import {
   type FormEvent,
 } from "react";
 
+import StudyExportActions from "@/components/study-export-actions";
 import StudyHistory from "@/components/study-history";
 import StudyResults from "@/components/study-results";
 import VoiceRecorder from "@/components/voice-recorder";
@@ -292,25 +293,31 @@ export default function StudyWorkspace() {
 
     if (!file.type.startsWith("audio/")) {
       setAudioFile(null);
+
       setErrorMessage(
         "Please select a valid audio recording.",
       );
+
       return;
     }
 
     if (file.size === 0) {
       setAudioFile(null);
+
       setErrorMessage(
         "The selected audio recording is empty.",
       );
+
       return;
     }
 
     if (file.size > MAX_AUDIO_SIZE) {
       setAudioFile(null);
+
       setErrorMessage(
         "The selected audio file is larger than the 20 MB limit.",
       );
+
       return;
     }
 
@@ -526,7 +533,10 @@ export default function StudyWorkspace() {
 
     setErrorMessage("");
     setIsPrepared(true);
-    setStatusMessage("Saved study pack opened successfully.");
+
+    setStatusMessage(
+      "Saved study pack opened successfully.",
+    );
 
     setEducationLevel(session.educationLevel);
     setDifficulty(session.difficulty);
@@ -588,6 +598,7 @@ export default function StudyWorkspace() {
       setErrorMessage(
         "Stop the recording before generating the study pack.",
       );
+
       return;
     }
 
@@ -597,6 +608,7 @@ export default function StudyWorkspace() {
       setErrorMessage(validationError);
       setStatusMessage("");
       setIsPrepared(false);
+
       return;
     }
 
@@ -613,7 +625,9 @@ export default function StudyWorkspace() {
 
       let studyInputMode: "topic" | "notes";
       let content: string;
-      let generatedTranscript: StudyTranscript | null = null;
+
+      let generatedTranscript: StudyTranscript | null =
+        null;
 
       if (inputMode === "voice") {
         if (!audioFile) {
@@ -622,23 +636,27 @@ export default function StudyWorkspace() {
           );
         }
 
-        generatedTranscript = await transcribeAudio(audioFile);
+        generatedTranscript =
+          await transcribeAudio(audioFile);
+
         studyInputMode = "notes";
         content = generatedTranscript.text;
       } else {
         setTranscript(null);
 
         studyInputMode = inputMode;
+
         content =
           inputMode === "topic"
             ? topic.trim()
             : notes.trim();
       }
 
-      const generatedStudyPack = await generateStudyPack(
-        studyInputMode,
-        content,
-      );
+      const generatedStudyPack =
+        await generateStudyPack(
+          studyInputMode,
+          content,
+        );
 
       setStudyPack(generatedStudyPack);
       setGeneratedOutputs([...selectedOutputs]);
@@ -670,7 +688,10 @@ export default function StudyWorkspace() {
       setIsPrepared(false);
     } finally {
       setIsGenerating(false);
-      setGenerationMessage("Generating study pack...");
+
+      setGenerationMessage(
+        "Generating study pack...",
+      );
     }
   }
 
@@ -868,7 +889,9 @@ export default function StudyWorkspace() {
                     onAudioReady={handleVoiceFileReady}
                     onRemove={handleVoiceFileRemove}
                     onError={handleVoiceError}
-                    onRecordingChange={handleRecordingChange}
+                    onRecordingChange={
+                      handleRecordingChange
+                    }
                   />
                 )}
               </div>
@@ -1000,7 +1023,9 @@ export default function StudyWorkspace() {
                         type="button"
                         aria-pressed={isSelected}
                         disabled={controlsDisabled}
-                        onClick={() => toggleOutput(output.id)}
+                        onClick={() =>
+                          toggleOutput(output.id)
+                        }
                         className={`flex items-start gap-3 rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
                           isSelected
                             ? "border-indigo-500 bg-indigo-50"
@@ -1288,6 +1313,15 @@ export default function StudyWorkspace() {
             id="generated-study-pack"
             className="scroll-mt-8"
           >
+            <StudyExportActions
+              studyPack={studyPack}
+              generatedOutputs={generatedOutputs}
+              transcript={transcript}
+              sourceTitle={sourceTitle}
+              educationLevel={educationLevel}
+              difficulty={difficulty}
+            />
+
             <StudyResults
               studyPack={studyPack}
               generatedOutputs={generatedOutputs}
