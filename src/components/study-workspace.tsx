@@ -3,20 +3,16 @@
 import Link from "next/link";
 import {
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
 } from "react";
 
-type InputMode = "topic" | "notes" | "voice";
+import StudyResults from "@/components/study-results";
+import type { OutputId, StudyPack } from "@/lib/study-schema";
 
-type OutputId =
-  | "explanation"
-  | "summary"
-  | "keyPoints"
-  | "flashcards"
-  | "quiz"
-  | "revisionQuestions";
+type InputMode = "topic" | "notes" | "voice";
 
 type StudyOutput = {
   id: OutputId;
@@ -100,16 +96,25 @@ const defaultOutputs: OutputId[] = [
 ];
 
 export default function StudyWorkspace() {
+  const audioInputRef = useRef<HTMLInputElement | null>(null);
+
   const [inputMode, setInputMode] = useState<InputMode>("topic");
   const [topic, setTopic] = useState("");
   const [notes, setNotes] = useState("");
   const [audioFile, setAudioFile] = useState<File | null>(null);
+
   const [educationLevel, setEducationLevel] = useState("beginner");
   const [difficulty, setDifficulty] = useState("medium");
+
   const [selectedOutputs, setSelectedOutputs] =
     useState<OutputId[]>(defaultOutputs);
+
   const [errorMessage, setErrorMessage] = useState("");
   const [isPrepared, setIsPrepared] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const [studyPack, setStudyPack] = useState<StudyPack | null>(null);
+  const [generatedOutputs, setGeneratedOutputs] = useState<OutputId[]>([]);
 
   const sourceTitle = useMemo(() => {
     if (inputMode === "topic") {
@@ -131,10 +136,14 @@ export default function StudyWorkspace() {
     return audioFile?.name ?? "No audio file selected";
   }, [audioFile, inputMode, notes, topic]);
 
-  function selectInputMode(mode: InputMode) {
-    setInputMode(mode);
+  function clearStatusMessages() {
     setErrorMessage("");
     setIsPrepared(false);
+  }
+
+  function selectInputMode(mode: InputMode) {
+    setInputMode(mode);
+    clearStatusMessages();
   }
 
   function toggleOutput(outputId: OutputId) {
@@ -146,15 +155,18 @@ export default function StudyWorkspace() {
       return [...currentOutputs, outputId];
     });
 
-    setErrorMessage("");
-    setIsPrepared(false);
+    clearStatusMessages();
+  }
+
+  function selectAllOutputs() {
+    setSelectedOutputs(studyOutputs.map((output) => output.id));
+    clearStatusMessages();
   }
 
   function handleAudioChange(event: ChangeEvent<HTMLInputElement>) {
     const selectedFile = event.target.files?.[0];
 
-    setErrorMessage("");
-    setIsPrepared(false);
+    clearStatusMessages();
 
     if (!selectedFile) {
       setAudioFile(null);
@@ -180,6 +192,16 @@ export default function StudyWorkspace() {
     setAudioFile(selectedFile);
   }
 
+  function removeAudioFile() {
+    setAudioFile(null);
+
+    if (audioInputRef.current) {
+      audioInputRef.current.value = "";
+    }
+
+    clearStatusMessages();
+  }
+
   function validateInput() {
     if (inputMode === "topic" && topic.trim().length < 3) {
       return "Enter a topic containing at least three characters.";
@@ -200,7 +222,7 @@ export default function StudyWorkspace() {
     return "";
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const validationError = validateInput();
@@ -211,8 +233,65 @@ export default function StudyWorkspace() {
       return;
     }
 
+    if (inputMode === "voice") {
+      setErrorMessage(
+        "Voice transcription is not connected yet. Use Topic or Notes for this step.",
+      );
+      setIsPrepared(false);
+      return;
+    }
+
+    const content =
+      inputMode === "topic" ? topic.trim() : notes.trim();
+
     setErrorMessage("");
-    setIsPrepared(true);
+    setIsPrepared(false);
+    setIsGenerating(true);
+    setStudyPack(null);
+
+    try {
+      const response = await fetch("/api/study", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          inputMode,
+          content,
+          educationLevel,
+          difficulty,
+          selectedOutputs,
+        }),
+      });
+
+      const responseData: unknown = await response.json();
+
+      if (!response.ok) {
+        const apiError =
+          typeof responseData === "object" &&
+          responseData !== null &&
+          "error" in responseData &&
+          typeof responseData.error === "string"
+            ? responseData.error
+            : "The study pack could not be generated.";
+
+        throw new Error(apiError);
+      }
+
+      setStudyPack(responseData as StudyPack);
+      setGeneratedOutputs([...selectedOutputs]);
+      setIsPrepared(true);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred.";
+
+      setErrorMessage(message);
+      setIsPrepared(false);
+    } finally {
+      setIsGenerating(false);
+    }
   }
 
   return (
@@ -226,7 +305,9 @@ export default function StudyWorkspace() {
 
             <div>
               <p className="font-bold leading-none">StudyVoice AI</p>
-              <p className="mt-1 text-xs text-slate-500">Study workspace</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Study workspace
+              </p>
             </div>
           </Link>
 
@@ -250,8 +331,9 @@ export default function StudyWorkspace() {
           </h1>
 
           <p className="mt-3 max-w-3xl leading-7 text-slate-600">
-            Enter a topic, paste notes, or upload a voice recording. Choose the
-            learning materials that StudyVoice AI should prepare.
+            Enter a topic, paste notes, or upload a voice recording.
+            Choose the learning materials that StudyVoice AI should
+            prepare.
           </p>
         </div>
 
@@ -265,6 +347,7 @@ export default function StudyWorkspace() {
                 <p className="text-xs font-bold uppercase tracking-widest text-indigo-600">
                   Step 1
                 </p>
+
                 <h2 className="mt-2 text-xl font-bold">
                   Choose your input method
                 </h2>
@@ -295,7 +378,9 @@ export default function StudyWorkspace() {
 
                       <span
                         className={`mt-3 block text-sm font-bold ${
-                          isActive ? "text-indigo-700" : "text-slate-900"
+                          isActive
+                            ? "text-indigo-700"
+                            : "text-slate-900"
                         }`}
                       >
                         {mode.title}
@@ -323,17 +408,18 @@ export default function StudyWorkspace() {
                       id="study-topic"
                       type="text"
                       value={topic}
+                      disabled={isGenerating}
                       onChange={(event) => {
                         setTopic(event.target.value);
-                        setErrorMessage("");
-                        setIsPrepared(false);
+                        clearStatusMessages();
                       }}
                       placeholder="Example: Explain JavaScript promises to a beginner"
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                     />
 
                     <p className="mt-2 text-xs text-slate-500">
-                      Enter a subject, concept, question, or learning objective.
+                      Enter a subject, concept, question, or learning
+                      objective.
                     </p>
                   </div>
                 )}
@@ -356,14 +442,14 @@ export default function StudyWorkspace() {
                     <textarea
                       id="study-notes"
                       value={notes}
+                      disabled={isGenerating}
                       onChange={(event) => {
                         setNotes(event.target.value);
-                        setErrorMessage("");
-                        setIsPrepared(false);
+                        clearStatusMessages();
                       }}
                       placeholder="Paste lecture notes, textbook content, or revision material here..."
                       rows={10}
-                      className="w-full resize-y rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm leading-6 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                      className="w-full resize-y rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm leading-6 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                     />
                   </div>
                 )}
@@ -381,7 +467,8 @@ export default function StudyWorkspace() {
                       </span>
 
                       <span className="mt-2 block text-sm text-slate-500">
-                        Choose a lecture, discussion, or personal voice note
+                        Choose a lecture, discussion, or personal
+                        voice note
                       </span>
 
                       <span className="mt-4 inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
@@ -390,9 +477,11 @@ export default function StudyWorkspace() {
                     </label>
 
                     <input
+                      ref={audioInputRef}
                       id="audio-file"
                       type="file"
                       accept="audio/*"
+                      disabled={isGenerating}
                       onChange={handleAudioChange}
                       className="sr-only"
                     />
@@ -411,11 +500,9 @@ export default function StudyWorkspace() {
 
                         <button
                           type="button"
-                          onClick={() => {
-                            setAudioFile(null);
-                            setIsPrepared(false);
-                          }}
-                          className="shrink-0 text-sm font-bold text-emerald-800 hover:text-emerald-950"
+                          disabled={isGenerating}
+                          onClick={removeAudioFile}
+                          className="shrink-0 text-sm font-bold text-emerald-800 hover:text-emerald-950 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           Remove
                         </button>
@@ -431,6 +518,7 @@ export default function StudyWorkspace() {
                 <p className="text-xs font-bold uppercase tracking-widest text-indigo-600">
                   Step 2
                 </p>
+
                 <h2 className="mt-2 text-xl font-bold">
                   Configure your study pack
                 </h2>
@@ -448,16 +536,23 @@ export default function StudyWorkspace() {
                   <select
                     id="education-level"
                     value={educationLevel}
+                    disabled={isGenerating}
                     onChange={(event) => {
                       setEducationLevel(event.target.value);
-                      setIsPrepared(false);
+                      clearStatusMessages();
                     }}
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                   >
                     <option value="beginner">Beginner</option>
-                    <option value="secondary">Secondary school</option>
-                    <option value="college">College or university</option>
-                    <option value="advanced">Advanced learner</option>
+                    <option value="secondary">
+                      Secondary school
+                    </option>
+                    <option value="college">
+                      College or university
+                    </option>
+                    <option value="advanced">
+                      Advanced learner
+                    </option>
                   </select>
                 </div>
 
@@ -472,15 +567,18 @@ export default function StudyWorkspace() {
                   <select
                     id="quiz-difficulty"
                     value={difficulty}
+                    disabled={isGenerating}
                     onChange={(event) => {
                       setDifficulty(event.target.value);
-                      setIsPrepared(false);
+                      clearStatusMessages();
                     }}
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                   >
                     <option value="easy">Easy</option>
                     <option value="medium">Medium</option>
-                    <option value="challenging">Challenging</option>
+                    <option value="challenging">
+                      Challenging
+                    </option>
                   </select>
                 </div>
               </div>
@@ -491,6 +589,7 @@ export default function StudyWorkspace() {
                     <h3 className="font-bold text-slate-900">
                       Select study outputs
                     </h3>
+
                     <p className="mt-1 text-sm text-slate-500">
                       Choose one or more materials to generate.
                     </p>
@@ -498,13 +597,9 @@ export default function StudyWorkspace() {
 
                   <button
                     type="button"
-                    onClick={() => {
-                      setSelectedOutputs(
-                        studyOutputs.map((output) => output.id),
-                      );
-                      setIsPrepared(false);
-                    }}
-                    className="text-sm font-bold text-indigo-600 hover:text-indigo-800"
+                    disabled={isGenerating}
+                    onClick={selectAllOutputs}
+                    className="text-sm font-bold text-indigo-600 hover:text-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Select all
                   </button>
@@ -512,21 +607,26 @@ export default function StudyWorkspace() {
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {studyOutputs.map((output) => {
-                    const isSelected = selectedOutputs.includes(output.id);
+                    const isSelected = selectedOutputs.includes(
+                      output.id,
+                    );
 
                     return (
                       <button
                         key={output.id}
                         type="button"
                         aria-pressed={isSelected}
+                        disabled={isGenerating}
                         onClick={() => toggleOutput(output.id)}
-                        className={`flex items-start gap-3 rounded-xl border p-4 text-left transition ${
+                        className={`flex items-start gap-3 rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
                           isSelected
                             ? "border-indigo-500 bg-indigo-50"
                             : "border-slate-200 hover:border-indigo-300"
                         }`}
                       >
-                        <span className="text-xl">{output.icon}</span>
+                        <span className="text-xl">
+                          {output.icon}
+                        </span>
 
                         <span className="flex-1">
                           <span
@@ -568,13 +668,20 @@ export default function StudyWorkspace() {
                   <p className="text-xs font-bold uppercase tracking-widest text-indigo-600">
                     Study pack preview
                   </p>
+
                   <h2 className="mt-2 text-xl font-bold">
                     Generation settings
                   </h2>
                 </div>
 
-                <div className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
-                  AI ready
+                <div
+                  className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
+                    isGenerating
+                      ? "bg-amber-50 text-amber-700"
+                      : "bg-emerald-50 text-emerald-700"
+                  }`}
+                >
+                  {isGenerating ? "AI working" : "AI ready"}
                 </div>
               </div>
 
@@ -583,6 +690,7 @@ export default function StudyWorkspace() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Input method
                   </p>
+
                   <p className="mt-1 font-bold capitalize text-slate-900">
                     {inputMode}
                   </p>
@@ -592,6 +700,7 @@ export default function StudyWorkspace() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Source
                   </p>
+
                   <p className="mt-1 break-words text-sm font-semibold leading-6 text-slate-900">
                     {sourceTitle}
                   </p>
@@ -602,6 +711,7 @@ export default function StudyWorkspace() {
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Level
                     </p>
+
                     <p className="mt-1 text-sm font-bold capitalize text-slate-900">
                       {educationLevel}
                     </p>
@@ -611,6 +721,7 @@ export default function StudyWorkspace() {
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Difficulty
                     </p>
+
                     <p className="mt-1 text-sm font-bold capitalize text-slate-900">
                       {difficulty}
                     </p>
@@ -647,46 +758,77 @@ export default function StudyWorkspace() {
                 </div>
               </div>
 
+              {isGenerating && (
+                <div
+                  role="status"
+                  className="mt-6 rounded-xl border border-indigo-200 bg-indigo-50 p-4"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
+
+                    <div>
+                      <p className="font-bold text-indigo-900">
+                        Generating your study pack
+                      </p>
+
+                      <p className="mt-1 text-sm leading-6 text-indigo-700">
+                        StudyVoice AI is analyzing the material and
+                        preparing the selected learning resources.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {errorMessage && (
                 <div
                   role="alert"
-                  className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700"
+                  className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold leading-6 text-red-700"
                 >
                   {errorMessage}
                 </div>
               )}
 
-              {isPrepared && (
+              {isPrepared && !isGenerating && (
                 <div
                   role="status"
                   className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4"
                 >
                   <p className="font-bold text-emerald-900">
-                    Study request prepared successfully
+                    Study pack generated successfully
                   </p>
 
                   <p className="mt-2 text-sm leading-6 text-emerald-700">
-                    The workspace collected and validated your input. We will
-                    connect this form to the AI SDK in the next development
-                    step.
+                    Your interactive study materials are displayed
+                    below.
                   </p>
                 </div>
               )}
 
               <button
                 type="submit"
-                className="mt-6 w-full rounded-xl bg-indigo-600 px-5 py-3.5 font-bold text-white shadow-lg shadow-indigo-100 transition hover:-translate-y-0.5 hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200"
+                disabled={isGenerating}
+                className="mt-6 w-full rounded-xl bg-indigo-600 px-5 py-3.5 font-bold text-white shadow-lg shadow-indigo-100 transition hover:-translate-y-0.5 hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
               >
-                Generate study pack
+                {isGenerating
+                  ? "Generating study pack..."
+                  : "Generate study pack"}
               </button>
 
               <p className="mt-3 text-center text-xs leading-5 text-slate-500">
-                AI generation is not connected yet. This step builds and tests
-                the complete input interface.
+                Topic and notes generation are connected. Voice
+                transcription will be added next.
               </p>
             </div>
           </aside>
         </form>
+
+        {studyPack && (
+          <StudyResults
+            studyPack={studyPack}
+            generatedOutputs={generatedOutputs}
+          />
+        )}
       </section>
     </main>
   );
