@@ -14,6 +14,12 @@ import type { OutputId, StudyPack } from "@/lib/study-schema";
 
 type InputMode = "topic" | "notes" | "voice";
 
+type TranscriptResult = {
+  text: string;
+  language: string | null;
+  durationInSeconds: number | null;
+};
+
 type StudyOutput = {
   id: OutputId;
   title: string;
@@ -113,8 +119,18 @@ export default function StudyWorkspace() {
   const [isPrepared, setIsPrepared] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
 
+  const [generationMessage, setGenerationMessage] = useState(
+    "Generating study pack...",
+  );
+
+  const [transcript, setTranscript] =
+    useState<TranscriptResult | null>(null);
+
   const [studyPack, setStudyPack] = useState<StudyPack | null>(null);
-  const [generatedOutputs, setGeneratedOutputs] = useState<OutputId[]>([]);
+
+  const [generatedOutputs, setGeneratedOutputs] = useState<
+    OutputId[]
+  >([]);
 
   const sourceTitle = useMemo(() => {
     if (inputMode === "topic") {
@@ -141,9 +157,19 @@ export default function StudyWorkspace() {
     setIsPrepared(false);
   }
 
+  function clearGeneratedContent() {
+    setStudyPack(null);
+    setGeneratedOutputs([]);
+  }
+
   function selectInputMode(mode: InputMode) {
     setInputMode(mode);
     clearStatusMessages();
+    clearGeneratedContent();
+
+    if (mode !== "voice") {
+      setTranscript(null);
+    }
   }
 
   function toggleOutput(outputId: OutputId) {
@@ -156,17 +182,21 @@ export default function StudyWorkspace() {
     });
 
     clearStatusMessages();
+    clearGeneratedContent();
   }
 
   function selectAllOutputs() {
     setSelectedOutputs(studyOutputs.map((output) => output.id));
     clearStatusMessages();
+    clearGeneratedContent();
   }
 
   function handleAudioChange(event: ChangeEvent<HTMLInputElement>) {
     const selectedFile = event.target.files?.[0];
 
     clearStatusMessages();
+    clearGeneratedContent();
+    setTranscript(null);
 
     if (!selectedFile) {
       setAudioFile(null);
@@ -176,7 +206,9 @@ export default function StudyWorkspace() {
     if (!selectedFile.type.startsWith("audio/")) {
       setAudioFile(null);
       event.target.value = "";
-      setErrorMessage("Please select a valid audio file.");
+      setErrorMessage(
+        "Please select a valid MP3, MP4, M4A, WAV, MPEG, MPGA, or WebM audio file.",
+      );
       return;
     }
 
@@ -184,7 +216,7 @@ export default function StudyWorkspace() {
       setAudioFile(null);
       event.target.value = "";
       setErrorMessage(
-        "The selected audio file is larger than the prototype limit of 20 MB.",
+        "The selected audio file is larger than the 20 MB limit.",
       );
       return;
     }
@@ -194,6 +226,8 @@ export default function StudyWorkspace() {
 
   function removeAudioFile() {
     setAudioFile(null);
+    setTranscript(null);
+    clearGeneratedContent();
 
     if (audioInputRef.current) {
       audioInputRef.current.value = "";
@@ -233,30 +267,110 @@ export default function StudyWorkspace() {
       return;
     }
 
-    if (inputMode === "voice") {
-      setErrorMessage(
-        "Voice transcription is not connected yet. Use Topic or Notes for this step.",
-      );
-      setIsPrepared(false);
-      return;
-    }
-
-    const content =
-      inputMode === "topic" ? topic.trim() : notes.trim();
-
     setErrorMessage("");
     setIsPrepared(false);
     setIsGenerating(true);
     setStudyPack(null);
+    setGeneratedOutputs([]);
 
     try {
-      const response = await fetch("/api/study", {
+      let content: string;
+      let studyInputMode: "topic" | "notes";
+
+      if (inputMode === "voice") {
+        if (!audioFile) {
+          throw new Error(
+            "Select an audio file before continuing.",
+          );
+        }
+
+        setGenerationMessage("Transcribing voice note...");
+        setTranscript(null);
+
+        const formData = new FormData();
+        formData.append("audio", audioFile);
+
+        const transcriptionResponse = await fetch(
+          "/api/transcribe",
+          {
+            method: "POST",
+            body: formData,
+          },
+        );
+
+        const transcriptionData: unknown =
+          await transcriptionResponse.json();
+
+        if (!transcriptionResponse.ok) {
+          const transcriptionError =
+            typeof transcriptionData === "object" &&
+            transcriptionData !== null &&
+            "error" in transcriptionData &&
+            typeof transcriptionData.error === "string"
+              ? transcriptionData.error
+              : "The voice note could not be transcribed.";
+
+          throw new Error(transcriptionError);
+        }
+
+        if (
+          typeof transcriptionData !== "object" ||
+          transcriptionData === null ||
+          !("text" in transcriptionData) ||
+          typeof transcriptionData.text !== "string"
+        ) {
+          throw new Error(
+            "The transcription service returned an invalid response.",
+          );
+        }
+
+        const transcriptResult: TranscriptResult = {
+          text: transcriptionData.text,
+          language:
+            "language" in transcriptionData &&
+            typeof transcriptionData.language === "string"
+              ? transcriptionData.language
+              : null,
+          durationInSeconds:
+            "durationInSeconds" in transcriptionData &&
+            typeof transcriptionData.durationInSeconds ===
+              "number"
+              ? transcriptionData.durationInSeconds
+              : null,
+        };
+
+        if (transcriptResult.text.trim().length < 3) {
+          throw new Error(
+            "No clear speech was detected in the recording.",
+          );
+        }
+
+        setTranscript(transcriptResult);
+
+        content = transcriptResult.text.trim();
+        studyInputMode = "notes";
+
+        setGenerationMessage("Generating study pack...");
+      } else {
+        setTranscript(null);
+
+        content =
+          inputMode === "topic"
+            ? topic.trim()
+            : notes.trim();
+
+        studyInputMode = inputMode;
+
+        setGenerationMessage("Generating study pack...");
+      }
+
+      const studyResponse = await fetch("/api/study", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          inputMode,
+          inputMode: studyInputMode,
           content,
           educationLevel,
           difficulty,
@@ -264,21 +378,22 @@ export default function StudyWorkspace() {
         }),
       });
 
-      const responseData: unknown = await response.json();
+      const studyResponseData: unknown =
+        await studyResponse.json();
 
-      if (!response.ok) {
+      if (!studyResponse.ok) {
         const apiError =
-          typeof responseData === "object" &&
-          responseData !== null &&
-          "error" in responseData &&
-          typeof responseData.error === "string"
-            ? responseData.error
+          typeof studyResponseData === "object" &&
+          studyResponseData !== null &&
+          "error" in studyResponseData &&
+          typeof studyResponseData.error === "string"
+            ? studyResponseData.error
             : "The study pack could not be generated.";
 
         throw new Error(apiError);
       }
 
-      setStudyPack(responseData as StudyPack);
+      setStudyPack(studyResponseData as StudyPack);
       setGeneratedOutputs([...selectedOutputs]);
       setIsPrepared(true);
     } catch (error) {
@@ -291,6 +406,7 @@ export default function StudyWorkspace() {
       setIsPrepared(false);
     } finally {
       setIsGenerating(false);
+      setGenerationMessage("Generating study pack...");
     }
   }
 
@@ -304,7 +420,10 @@ export default function StudyWorkspace() {
             </div>
 
             <div>
-              <p className="font-bold leading-none">StudyVoice AI</p>
+              <p className="font-bold leading-none">
+                StudyVoice AI
+              </p>
+
               <p className="mt-1 text-xs text-slate-500">
                 Study workspace
               </p>
@@ -331,9 +450,9 @@ export default function StudyWorkspace() {
           </h1>
 
           <p className="mt-3 max-w-3xl leading-7 text-slate-600">
-            Enter a topic, paste notes, or upload a voice recording.
-            Choose the learning materials that StudyVoice AI should
-            prepare.
+            Enter a topic, paste notes, or upload a voice
+            recording. Choose the learning materials that
+            StudyVoice AI should prepare.
           </p>
         </div>
 
@@ -367,14 +486,17 @@ export default function StudyWorkspace() {
                       type="button"
                       role="tab"
                       aria-selected={isActive}
+                      disabled={isGenerating}
                       onClick={() => selectInputMode(mode.id)}
-                      className={`rounded-xl border p-4 text-left transition ${
+                      className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
                         isActive
                           ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500"
                           : "border-slate-200 bg-white hover:border-indigo-300"
                       }`}
                     >
-                      <span className="text-2xl">{mode.icon}</span>
+                      <span className="text-2xl">
+                        {mode.icon}
+                      </span>
 
                       <span
                         className={`mt-3 block text-sm font-bold ${
@@ -412,14 +534,15 @@ export default function StudyWorkspace() {
                       onChange={(event) => {
                         setTopic(event.target.value);
                         clearStatusMessages();
+                        clearGeneratedContent();
                       }}
                       placeholder="Example: Explain JavaScript promises to a beginner"
                       className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                     />
 
                     <p className="mt-2 text-xs text-slate-500">
-                      Enter a subject, concept, question, or learning
-                      objective.
+                      Enter a subject, concept, question, or
+                      learning objective.
                     </p>
                   </div>
                 )}
@@ -446,6 +569,7 @@ export default function StudyWorkspace() {
                       onChange={(event) => {
                         setNotes(event.target.value);
                         clearStatusMessages();
+                        clearGeneratedContent();
                       }}
                       placeholder="Paste lecture notes, textbook content, or revision material here..."
                       rows={10}
@@ -458,9 +582,15 @@ export default function StudyWorkspace() {
                   <div>
                     <label
                       htmlFor="audio-file"
-                      className="block cursor-pointer rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center transition hover:border-indigo-400 hover:bg-indigo-50"
+                      className={`block rounded-2xl border-2 border-dashed px-6 py-10 text-center transition ${
+                        isGenerating
+                          ? "cursor-not-allowed border-slate-200 bg-slate-100 opacity-70"
+                          : "cursor-pointer border-slate-300 bg-slate-50 hover:border-indigo-400 hover:bg-indigo-50"
+                      }`}
                     >
-                      <span className="block text-4xl">🎧</span>
+                      <span className="block text-4xl">
+                        🎧
+                      </span>
 
                       <span className="mt-4 block font-bold text-slate-900">
                         Select an audio recording
@@ -469,6 +599,11 @@ export default function StudyWorkspace() {
                       <span className="mt-2 block text-sm text-slate-500">
                         Choose a lecture, discussion, or personal
                         voice note
+                      </span>
+
+                      <span className="mt-2 block text-xs text-slate-400">
+                        MP3, MP4, M4A, WAV, MPEG, MPGA or WebM,
+                        maximum 20 MB
                       </span>
 
                       <span className="mt-4 inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
@@ -480,7 +615,7 @@ export default function StudyWorkspace() {
                       ref={audioInputRef}
                       id="audio-file"
                       type="file"
-                      accept="audio/*"
+                      accept=".mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm,audio/*"
                       disabled={isGenerating}
                       onChange={handleAudioChange}
                       className="sr-only"
@@ -494,7 +629,12 @@ export default function StudyWorkspace() {
                           </p>
 
                           <p className="mt-1 text-xs text-emerald-700">
-                            {(audioFile.size / 1024 / 1024).toFixed(2)} MB
+                            {(
+                              audioFile.size /
+                              1024 /
+                              1024
+                            ).toFixed(2)}{" "}
+                            MB
                           </p>
                         </div>
 
@@ -540,16 +680,22 @@ export default function StudyWorkspace() {
                     onChange={(event) => {
                       setEducationLevel(event.target.value);
                       clearStatusMessages();
+                      clearGeneratedContent();
                     }}
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                   >
-                    <option value="beginner">Beginner</option>
+                    <option value="beginner">
+                      Beginner
+                    </option>
+
                     <option value="secondary">
                       Secondary school
                     </option>
+
                     <option value="college">
                       College or university
                     </option>
+
                     <option value="advanced">
                       Advanced learner
                     </option>
@@ -571,11 +717,14 @@ export default function StudyWorkspace() {
                     onChange={(event) => {
                       setDifficulty(event.target.value);
                       clearStatusMessages();
+                      clearGeneratedContent();
                     }}
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                   >
                     <option value="easy">Easy</option>
+
                     <option value="medium">Medium</option>
+
                     <option value="challenging">
                       Challenging
                     </option>
@@ -607,9 +756,8 @@ export default function StudyWorkspace() {
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {studyOutputs.map((output) => {
-                    const isSelected = selectedOutputs.includes(
-                      output.id,
-                    );
+                    const isSelected =
+                      selectedOutputs.includes(output.id);
 
                     return (
                       <button
@@ -617,7 +765,9 @@ export default function StudyWorkspace() {
                         type="button"
                         aria-pressed={isSelected}
                         disabled={isGenerating}
-                        onClick={() => toggleOutput(output.id)}
+                        onClick={() =>
+                          toggleOutput(output.id)
+                        }
                         className={`flex items-start gap-3 rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
                           isSelected
                             ? "border-indigo-500 bg-indigo-50"
@@ -692,7 +842,9 @@ export default function StudyWorkspace() {
                   </p>
 
                   <p className="mt-1 font-bold capitalize text-slate-900">
-                    {inputMode}
+                    {inputMode === "voice"
+                      ? "Voice note"
+                      : inputMode}
                   </p>
                 </div>
 
@@ -763,17 +915,20 @@ export default function StudyWorkspace() {
                   role="status"
                   className="mt-6 rounded-xl border border-indigo-200 bg-indigo-50 p-4"
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
+                  <div className="flex items-start gap-3">
+                    <span className="mt-1 h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
 
                     <div>
                       <p className="font-bold text-indigo-900">
-                        Generating your study pack
+                        {generationMessage}
                       </p>
 
                       <p className="mt-1 text-sm leading-6 text-indigo-700">
-                        StudyVoice AI is analyzing the material and
-                        preparing the selected learning resources.
+                        {generationMessage.startsWith(
+                          "Transcribing",
+                        )
+                          ? "StudyVoice AI is converting the recording into written text."
+                          : "StudyVoice AI is preparing the selected learning resources."}
                       </p>
                     </div>
                   </div>
@@ -799,8 +954,8 @@ export default function StudyWorkspace() {
                   </p>
 
                   <p className="mt-2 text-sm leading-6 text-emerald-700">
-                    Your interactive study materials are displayed
-                    below.
+                    Your interactive study materials are
+                    displayed below.
                   </p>
                 </div>
               )}
@@ -811,17 +966,63 @@ export default function StudyWorkspace() {
                 className="mt-6 w-full rounded-xl bg-indigo-600 px-5 py-3.5 font-bold text-white shadow-lg shadow-indigo-100 transition hover:-translate-y-0.5 hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
               >
                 {isGenerating
-                  ? "Generating study pack..."
+                  ? generationMessage
                   : "Generate study pack"}
               </button>
 
               <p className="mt-3 text-center text-xs leading-5 text-slate-500">
-                Topic and notes generation are connected. Voice
-                transcription will be added next.
+                Generate learning materials from topics, written
+                notes, or uploaded voice recordings.
               </p>
             </div>
           </aside>
         </form>
+
+        {transcript && (
+          <section className="mt-10 rounded-2xl border border-sky-200 bg-white p-6 shadow-sm sm:p-8">
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+              <div className="flex items-center gap-3">
+                <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-sky-100 text-2xl">
+                  🎙️
+                </span>
+
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-sky-700">
+                    Voice transcription
+                  </p>
+
+                  <h2 className="mt-1 text-2xl font-black text-slate-950">
+                    Recording transcript
+                  </h2>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {transcript.language && (
+                  <span className="rounded-full bg-sky-50 px-3 py-1.5 text-xs font-bold uppercase text-sky-700">
+                    Language: {transcript.language}
+                  </span>
+                )}
+
+                {transcript.durationInSeconds !== null && (
+                  <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700">
+                    Duration:{" "}
+                    {Math.round(
+                      transcript.durationInSeconds,
+                    )}{" "}
+                    seconds
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-5">
+              <p className="whitespace-pre-line leading-8 text-slate-700">
+                {transcript.text}
+              </p>
+            </div>
+          </section>
+        )}
 
         {studyPack && (
           <StudyResults
