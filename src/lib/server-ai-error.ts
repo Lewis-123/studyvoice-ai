@@ -33,7 +33,9 @@ type MappedApiError = PublicApiError & {
   status: number;
 };
 
-type AiOperation = "study generation" | "transcription";
+type AiOperation =
+  | "study generation"
+  | "transcription";
 
 export type RequestAbortContext = {
   signal: AbortSignal;
@@ -70,7 +72,7 @@ export function createPublicErrorResponse(
 export function createMissingApiKeyResponse() {
   return createPublicErrorResponse(
     "CONFIGURATION_ERROR",
-    "The AI service is not configured. Add OPENAI_API_KEY to the server environment and restart the application.",
+    "The AI service is not configured. Add GROQ_API_KEY to the server environment and restart the application.",
     503,
     false,
   );
@@ -132,18 +134,29 @@ export function createRequestAbortContext(
   };
 }
 
-function getNestedRetryError(error: unknown) {
-  if (!RetryError.isInstance(error)) {
-    return error;
+function unwrapRetryError(error: unknown) {
+  let currentError = error;
+
+  for (
+    let attempt = 0;
+    attempt < 4;
+    attempt += 1
+  ) {
+    if (!RetryError.isInstance(currentError)) {
+      break;
+    }
+
+    const retryErrors = currentError.errors;
+
+    if (retryErrors.length === 0) {
+      break;
+    }
+
+    currentError =
+      retryErrors[retryErrors.length - 1];
   }
 
-  const retryErrors = error.errors;
-
-  if (retryErrors.length === 0) {
-    return error;
-  }
-
-  return retryErrors[retryErrors.length - 1];
+  return currentError;
 }
 
 function getErrorSearchText(error: unknown) {
@@ -154,42 +167,94 @@ function getErrorSearchText(error: unknown) {
   }
 
   if (APICallError.isInstance(error)) {
-    if (typeof error.responseBody === "string") {
+    if (
+      typeof error.responseBody === "string"
+    ) {
       searchParts.push(error.responseBody);
-    } else if (error.responseBody !== undefined) {
+    } else if (
+      error.responseBody !== undefined
+    ) {
       try {
         searchParts.push(
           JSON.stringify(error.responseBody),
         );
       } catch {
-        // Ignore response bodies that cannot be serialized.
+        // Ignore provider response bodies
+        // that cannot be serialized.
       }
     }
   }
 
-  return searchParts.join(" ").toLowerCase();
+  return searchParts
+    .join(" ")
+    .toLowerCase();
 }
 
-function isQuotaError(error: unknown) {
-  const errorText = getErrorSearchText(error);
+function isQuotaOrBillingError(
+  error: unknown,
+) {
+  const errorText =
+    getErrorSearchText(error);
 
   return (
-    errorText.includes("insufficient_quota") ||
-    errorText.includes("exceeded your current quota") ||
-    errorText.includes("billing_hard_limit") ||
-    errorText.includes("billing limit") ||
-    errorText.includes("credit balance") ||
-    errorText.includes("payment method") ||
-    errorText.includes("billing")
+    errorText.includes(
+      "insufficient_quota",
+    ) ||
+    errorText.includes(
+      "exceeded your current quota",
+    ) ||
+    errorText.includes(
+      "billing_hard_limit",
+    ) ||
+    errorText.includes(
+      "billing limit",
+    ) ||
+    errorText.includes(
+      "credit balance",
+    ) ||
+    errorText.includes(
+      "spending limit",
+    ) ||
+    errorText.includes(
+      "payment required",
+    )
   );
 }
 
-function isAbortLikeError(error: unknown) {
+function isUnsupportedAudioError(
+  error: unknown,
+) {
+  const errorText =
+    getErrorSearchText(error);
+
+  return (
+    errorText.includes(
+      "unsupported audio",
+    ) ||
+    errorText.includes(
+      "unsupported file",
+    ) ||
+    errorText.includes(
+      "invalid file format",
+    ) ||
+    errorText.includes(
+      "audio format",
+    ) ||
+    errorText.includes(
+      "could not decode",
+    )
+  );
+}
+
+function isAbortLikeError(
+  error: unknown,
+) {
   if (!(error instanceof Error)) {
     return false;
   }
 
-  const message = error.message.toLowerCase();
+  const message =
+    error.message.toLowerCase();
 
   return (
     error.name === "AbortError" ||
@@ -202,53 +267,75 @@ function mapAiError(
   originalError: unknown,
   operation: AiOperation,
 ): MappedApiError {
-  const nestedError = getNestedRetryError(originalError);
-
-  if (nestedError !== originalError) {
-    return mapAiError(nestedError, operation);
-  }
-
-  const error = nestedError;
+  const error =
+    unwrapRetryError(originalError);
 
   if (LoadAPIKeyError.isInstance(error)) {
     return {
       code: "CONFIGURATION_ERROR",
+
       message:
-        "The AI service does not have a configured API key.",
+        "The Groq AI service does not have a configured API key.",
+
       status: 503,
       retryable: false,
     };
   }
 
-  if (NoObjectGeneratedError.isInstance(error)) {
+  if (
+    NoObjectGeneratedError.isInstance(error)
+  ) {
     return {
       code: "INVALID_AI_RESPONSE",
+
       message:
         "The AI returned an incomplete or incorrectly formatted study pack.",
+
       status: 502,
       retryable: true,
     };
   }
 
-  if (NoTranscriptGeneratedError.isInstance(error)) {
+  if (
+    NoTranscriptGeneratedError.isInstance(
+      error,
+    )
+  ) {
     return {
       code: "TRANSCRIPTION_FAILED",
+
       message:
         "The recording could not be converted into a usable transcript.",
+
       status: 422,
       retryable: true,
     };
   }
 
   if (APICallError.isInstance(error)) {
-    const statusCode = error.statusCode;
+    const statusCode =
+      error.statusCode;
 
     if (statusCode === 401) {
       return {
         code: "INVALID_API_KEY",
+
         message:
-          "The configured OpenAI API key is invalid, expired, or has been revoked.",
+          "The configured Groq API key is invalid, expired, or has been revoked.",
+
         status: 503,
+        retryable: false,
+      };
+    }
+
+    if (statusCode === 402) {
+      return {
+        code: "API_CREDIT_EXHAUSTED",
+
+        message:
+          "The Groq API account has no available quota or requires an account billing update.",
+
+        status: 402,
         retryable: false,
       };
     }
@@ -256,18 +343,37 @@ function mapAiError(
     if (statusCode === 403) {
       return {
         code: "API_PERMISSION_DENIED",
+
         message:
-          "The API key does not have permission to use the requested AI model.",
+          "The Groq API key does not have permission to use the requested model.",
+
         status: 503,
         retryable: false,
       };
     }
 
-    if (statusCode === 429 && isQuotaError(error)) {
+    if (statusCode === 413) {
+      return {
+        code: "FILE_TOO_LARGE",
+
+        message:
+          "The audio file is larger than the provider's accepted upload limit.",
+
+        status: 413,
+        retryable: false,
+      };
+    }
+
+    if (
+      statusCode === 429 &&
+      isQuotaOrBillingError(error)
+    ) {
       return {
         code: "API_CREDIT_EXHAUSTED",
+
         message:
-          "The OpenAI API account has no available credit or has reached its spending limit.",
+          "The Groq API account has no available quota or has reached its account spending limit.",
+
         status: 402,
         retryable: false,
       };
@@ -276,28 +382,71 @@ function mapAiError(
     if (statusCode === 429) {
       return {
         code: "RATE_LIMITED",
+
         message:
-          "The AI service is receiving too many requests. Wait briefly and try again.",
+          "The Groq free-tier rate limit has been reached. Wait briefly and try again.",
+
         status: 429,
         retryable: true,
       };
     }
 
-    if (statusCode === 408 || statusCode === 504) {
+    if (
+      operation === "transcription" &&
+      statusCode === 400 &&
+      isUnsupportedAudioError(error)
+    ) {
+      return {
+        code: "UNSUPPORTED_AUDIO",
+
+        message:
+          "Groq could not process the selected audio format. Use a supported audio recording.",
+
+        status: 415,
+        retryable: false,
+      };
+    }
+
+    if (
+      operation === "transcription" &&
+      statusCode === 422
+    ) {
+      return {
+        code: "TRANSCRIPTION_FAILED",
+
+        message:
+          "Groq could not produce a usable transcript from the recording.",
+
+        status: 422,
+        retryable: true,
+      };
+    }
+
+    if (
+      statusCode === 408 ||
+      statusCode === 504
+    ) {
       return {
         code: "REQUEST_TIMEOUT",
+
         message:
-          "The AI provider took too long to respond.",
+          "The Groq AI service took too long to respond.",
+
         status: 504,
         retryable: true,
       };
     }
 
-    if (statusCode && statusCode >= 500) {
+    if (
+      statusCode !== undefined &&
+      statusCode >= 500
+    ) {
       return {
         code: "PROVIDER_UNAVAILABLE",
+
         message:
-          "The AI provider is temporarily unavailable.",
+          "The Groq AI service is temporarily unavailable.",
+
         status: 503,
         retryable: true,
       };
@@ -306,8 +455,10 @@ function mapAiError(
     if (!statusCode) {
       return {
         code: "NETWORK_ERROR",
+
         message:
-          "The server could not connect to the AI provider.",
+          "The server could not connect to the Groq AI service.",
+
         status: 503,
         retryable: true,
       };
@@ -315,17 +466,23 @@ function mapAiError(
 
     return {
       code: "UNKNOWN_ERROR",
-      message: `The ${operation} request was rejected by the AI provider.`,
+
+      message: `The ${operation} request was rejected by the Groq AI service.`,
+
       status: 502,
-      retryable: error.isRetryable,
+
+      retryable:
+        error.isRetryable === true,
     };
   }
 
   if (isAbortLikeError(error)) {
     return {
       code: "REQUEST_TIMEOUT",
+
       message:
         "The AI request was stopped because it took too long.",
+
       status: 504,
       retryable: true,
     };
@@ -333,7 +490,9 @@ function mapAiError(
 
   return {
     code: "UNKNOWN_ERROR",
+
     message: `The ${operation} request failed unexpectedly.`,
+
     status: 500,
     retryable: true,
   };
@@ -343,7 +502,10 @@ export function createAiErrorResponse(
   error: unknown,
   operation: AiOperation,
 ) {
-  console.error(`AI ${operation} failed:`, error);
+  console.error(
+    `AI ${operation} failed:`,
+    error,
+  );
 
   const mappedError = mapAiError(
     error,

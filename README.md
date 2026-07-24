@@ -2,8 +2,6 @@
 
 StudyVoice AI is an AI-powered learning workspace that transforms topics, written notes, and voice recordings into structured and interactive study materials.
 
-Students can generate explanations, summaries, key points, flashcards, quizzes, revision questions, and practical action points from one study session.
-
 ## Live Application
 
 **Live website:** [https://studyvoice-ai.vercel.app](https://studyvoice-ai.vercel.app)
@@ -14,18 +12,18 @@ Students can generate explanations, summaries, key points, flashcards, quizzes, 
 
 ## Project Overview
 
-StudyVoice AI combines three major artificial intelligence learning experiences:
+StudyVoice AI combines three educational artificial-intelligence experiences:
 
 1. **AI Study Assistant**  
-   Generates clear explanations, summaries, key points, flashcards, quizzes, revision questions, and action points.
+   Generates explanations, summaries, key points, flashcards, quizzes, revision questions, and action points.
 
 2. **Generative User Interface**  
-   Displays structured AI output through interactive user-interface components instead of presenting one block of plain text.
+   Converts structured AI responses into interactive learning components rather than displaying one plain block of text.
 
 3. **Voice Notes Assistant**  
-   Allows students to record or upload audio, transcribes the recording, and converts the transcript into learning materials.
+   Records or uploads audio, transcribes speech, and converts the transcript into study materials.
 
-The project is designed to make study preparation faster, more interactive, and more accessible for learners at different education levels.
+The application is designed to make revision faster, more organized, and more interactive.
 
 ---
 
@@ -35,35 +33,35 @@ The project is designed to make study preparation faster, more interactive, and 
 
 Students can create a study pack using:
 
-- A study topic or question
-- Written lecture or revision notes
+- A topic or question
+- Written study notes
 - A browser microphone recording
 - An uploaded audio recording
 
-### AI-Generated Learning Materials
+### AI-Generated Study Materials
 
 StudyVoice AI can generate:
 
 - Detailed explanations
 - Concise summaries
-- Key concepts and definitions
+- Key concepts
 - Interactive flashcards
 - Multiple-choice quizzes
-- Open-ended revision questions
+- Revision questions
 - Prioritized action points
 
 ### Voice Recording and Transcription
 
 The voice workspace supports:
 
-- Recording directly through the browser microphone
-- Uploading an existing audio file
-- Audio preview before submission
+- Browser microphone recording
+- Existing audio-file uploads
+- Audio playback before submission
 - Automatic speech-to-text transcription
-- Detected-language information when available
-- Recording-duration information when available
+- Detected-language information
+- Recording-duration information
 
-Supported audio formats include:
+Supported application formats:
 
 ```text
 MP3
@@ -75,87 +73,111 @@ WAV
 WebM
 ```
 
-The maximum supported audio-file size is 20 MB.
+The application limits audio uploads to 20 MB.
 
 ### Interactive Flashcards
 
 Students can:
 
-- Flip cards to reveal answers
-- Navigate forward and backward
-- Open a specific flashcard using the card indicators
-- Restart with a newly generated study pack
+- Flip flashcards
+- Move forward and backward
+- Open a specific card
+- Restart with a new generated study pack
 
 ### Interactive Quiz
 
-The quiz interface allows students to:
+Students can:
 
-- Select one answer for each question
-- Submit completed answers
-- View their final score
+- Select answers
+- Submit a completed quiz
+- View their score
 - Identify correct and incorrect responses
-- Read an explanation for every answer
+- Read an explanation for each answer
 - Restart the quiz
 
-### Interactive Action Points
+### Action Points
 
-Generated action points include:
+Generated action points contain:
 
 - A practical study task
-- A reason for completing the task
-- High, medium, or low priority
-- A completion checkbox
-- A live completion counter
+- A reason for completing it
+- A high, medium, or low priority
+- An interactive completion control
+- A completion counter
 
 ### Study History
 
-The application saves the 10 most recent study sessions in browser storage.
+The 10 most recent study sessions are stored in browser local storage.
 
 Students can:
 
 - Reopen a previous study pack
-- Review a saved voice transcript
-- Delete individual sessions
-- Clear the complete history
-- Retain saved sessions after refreshing the page
+- Review saved transcripts
+- Delete an individual session
+- Clear their complete history
+- Retain sessions after refreshing the page
 
-Study history is stored locally in the current browser. It is not synchronized across browsers or devices.
+History is stored only in the current browser and does not synchronize across devices.
 
 ### Study Pack Export
 
 Generated study packs can be exported as:
 
-- A downloadable Markdown document
-- A printable document
-- A PDF through the browser’s **Save as PDF** option
+- Markdown documents
+- Printable documents
+- PDF documents through the browser’s Save as PDF option
 
-### Reliability and Error Handling
+### Error Handling
 
 The application handles:
 
 - Missing API configuration
-- Invalid or revoked API keys
-- Insufficient API credit
-- API permission errors
-- Rate limiting
+- Invalid API keys
+- Provider permission problems
+- Free-tier rate limiting
+- API quota problems
 - Unsupported audio formats
 - Oversized audio files
-- Empty audio recordings
+- Empty recordings
 - Failed transcription
 - Network failures
-- Invalid AI responses
 - Provider outages
+- Invalid structured responses
 - Request timeouts
 - Long generation times
 - User-requested cancellation
 
 Long-running requests display:
 
-- The current processing stage
-- An elapsed-time counter
+- The active processing stage
+- Elapsed time
 - A long-wait warning
-- A cancellation control
+- A cancellation option
 - A retry option for recoverable failures
+
+---
+
+## AI Provider
+
+StudyVoice AI uses Groq through the Vercel AI SDK.
+
+### Text Model
+
+```text
+openai/gpt-oss-20b
+```
+
+The text model generates structured study packs containing the sections selected by the student.
+
+### Transcription Model
+
+```text
+whisper-large-v3-turbo
+```
+
+The transcription model converts uploaded or recorded speech into text before the study pack is generated.
+
+Groq free-tier access is subject to provider rate limits and model availability.
 
 ---
 
@@ -165,62 +187,58 @@ Long-running requests display:
 |---|---|
 | Next.js | Full-stack React framework |
 | React | Interactive user interface |
-| TypeScript | Type-safe application development |
-| Tailwind CSS | Responsive interface styling |
-| Vercel AI SDK | AI generation, transcription, and structured output |
-| OpenAI API | Study-material generation and voice transcription |
-| Zod | Input and AI-response validation |
-| Web MediaRecorder API | Browser microphone recording |
-| Browser Local Storage | Persistent study-session history |
-| Vercel | Production hosting and serverless deployment |
-| GitHub | Source-code management and collaboration |
+| TypeScript | Type-safe development |
+| Tailwind CSS | Responsive styling |
+| Vercel AI SDK | AI generation and transcription |
+| Groq API | Study generation and speech transcription |
+| Zod | Request and response validation |
+| MediaRecorder API | Browser microphone recording |
+| Local Storage | Persistent browser history |
+| Vercel | Hosting and serverless deployment |
+| GitHub | Source-code management |
 
 ---
 
 ## Application Architecture
 
-StudyVoice AI uses the Next.js App Router architecture.
-
 ```text
-User input
-   │
-   ├── Topic
-   ├── Written notes
-   └── Voice recording or audio upload
-   │
-   ▼
+Topic, notes, or voice input
+            │
+            ▼
 Client-side validation
-   │
-   ├── Input validation
-   ├── Audio-format validation
-   ├── Audio-size validation
-   └── Request cancellation
-   │
-   ▼
+            │
+            ├── Input validation
+            ├── Audio-format validation
+            ├── File-size validation
+            └── Request cancellation
+            │
+            ▼
 Next.js API routes
-   │
-   ├── /api/transcribe
-   │      └── Converts audio into text
-   │
-   └── /api/study
-          └── Generates a structured study pack
-   │
-   ▼
-Zod schema validation
-   │
-   ▼
-Generative user-interface components
-   │
-   ├── Explanation
-   ├── Summary
-   ├── Key points
-   ├── Flashcards
-   ├── Quiz
-   ├── Revision questions
-   └── Action points
-   │
-   ▼
-History and export tools
+            │
+            ├── /api/transcribe
+            │       │
+            │       └── Groq Whisper transcription
+            │
+            └── /api/study
+                    │
+                    └── Groq structured generation
+            │
+            ▼
+Zod response validation
+            │
+            ▼
+Interactive study components
+            │
+            ├── Explanation
+            ├── Summary
+            ├── Key points
+            ├── Flashcards
+            ├── Quiz
+            ├── Revision questions
+            └── Action points
+            │
+            ▼
+Study history and export tools
 ```
 
 ---
@@ -255,110 +273,36 @@ studyvoice-ai/
 ├── .env.local
 ├── .gitignore
 ├── package.json
+├── package-lock.json
 ├── README.md
 └── tsconfig.json
 ```
 
 ---
 
-## How the AI Integration Works
+## Local Installation
 
-### Structured Study Generation
+### Requirements
 
-The `/api/study` route receives:
-
-```json
-{
-  "inputMode": "topic",
-  "content": "Explain asynchronous JavaScript",
-  "educationLevel": "beginner",
-  "difficulty": "medium",
-  "selectedOutputs": [
-    "explanation",
-    "summary",
-    "flashcards",
-    "quiz"
-  ]
-}
-```
-
-The server uses the Vercel AI SDK and OpenAI to generate an object that follows the application’s Zod schema.
-
-A generated response follows a structure similar to:
-
-```json
-{
-  "title": "Understanding Asynchronous JavaScript",
-  "explanation": "A detailed explanation...",
-  "summary": "A concise summary...",
-  "keyPoints": null,
-  "flashcards": [
-    {
-      "front": "What is asynchronous programming?",
-      "back": "A programming approach that allows..."
-    }
-  ],
-  "quiz": [
-    {
-      "question": "Which keyword pauses an async function?",
-      "options": [
-        "stop",
-        "wait",
-        "await",
-        "pause"
-      ],
-      "correctAnswerIndex": 2,
-      "explanation": "The await keyword pauses execution..."
-    }
-  ],
-  "revisionQuestions": null,
-  "actionPoints": null
-}
-```
-
-Unselected sections are returned as `null`. This keeps the response predictable and allows the interface to render only the components requested by the learner.
-
-### Voice Transcription
-
-The `/api/transcribe` route:
-
-1. Receives an audio file through `FormData`.
-2. Validates its format and size.
-3. Converts it to a server-compatible audio buffer.
-4. Sends it to the transcription model.
-5. Returns the transcript, language, and duration when available.
-6. Sends the transcript to the study-generation route.
-
----
-
-## Getting Started Locally
-
-### Prerequisites
-
-Install the following tools:
+Install:
 
 - Node.js
 - npm
 - Git
 - Visual Studio Code
-- GitHub Desktop
-- An OpenAI API account with available API credit
+- A Groq API account and API key
 
 ### Clone the Repository
-
-Using Git:
 
 ```bash
 git clone https://github.com/Lewis-123/studyvoice-ai.git
 ```
 
-Move into the project folder:
+Enter the project folder:
 
 ```bash
 cd studyvoice-ai
 ```
-
-Alternatively, clone the repository using GitHub Desktop and open it in Visual Studio Code.
 
 ### Install Dependencies
 
@@ -366,9 +310,9 @@ Alternatively, clone the repository using GitHub Desktop and open it in Visual S
 npm install
 ```
 
-### Configure the Environment Variable
+### Configure the Groq API Key
 
-Create a file named:
+Create:
 
 ```text
 .env.local
@@ -377,20 +321,18 @@ Create a file named:
 Add:
 
 ```env
-OPENAI_API_KEY=your_openai_api_key_here
+GROQ_API_KEY=gsk_your_groq_api_key_here
 ```
-
-Replace `your_openai_api_key_here` with a valid OpenAI API key.
 
 Do not use:
 
 ```env
-NEXT_PUBLIC_OPENAI_API_KEY=your_openai_api_key_here
+NEXT_PUBLIC_GROQ_API_KEY=gsk_your_groq_api_key_here
 ```
 
-The API key must remain server-side and must never be exposed to the browser.
+The key must remain server-side.
 
-### Start the Development Server
+### Start Development Mode
 
 ```bash
 npm run dev
@@ -412,25 +354,25 @@ http://localhost:3000/study
 
 ## Available Commands
 
-### Start Development Mode
+### Development Server
 
 ```bash
 npm run dev
 ```
 
-### Run Linting
+### Linting
 
 ```bash
 npm run lint
 ```
 
-### Create a Production Build
+### Production Build
 
 ```bash
 npm run build
 ```
 
-### Start the Production Build Locally
+### Local Production Server
 
 ```bash
 npm run start
@@ -438,9 +380,9 @@ npm run start
 
 ---
 
-## Testing the Application
+## Testing
 
-### Topic Input Test
+### Topic Generation
 
 Enter:
 
@@ -448,86 +390,85 @@ Enter:
 Explain the difference between synchronous and asynchronous JavaScript
 ```
 
-Choose several study outputs and generate the study pack.
+Select several outputs and generate a study pack.
 
-### Written Notes Test
+### Notes Generation
 
-Paste at least 20 characters of lecture or revision notes and verify that the selected learning materials appear.
+Paste at least 20 characters of study notes and generate the selected materials.
 
-### Voice Recording Test
+### Voice Recording
 
-1. Open the Voice Note tab.
-2. Click **Start recording**.
+1. Select Voice Note.
+2. Start recording.
 3. Allow microphone access.
 4. Speak clearly.
 5. Stop the recording.
-6. Play the audio preview.
-7. Generate a study pack.
+6. Preview the audio.
+7. Generate the study pack.
 8. Confirm that the transcript appears.
 
-### Audio Upload Test
+### Audio Upload
 
-Upload a supported MP3, MP4, MPEG, MPGA, M4A, WAV, or WebM file smaller than 20 MB.
+Upload a supported audio file smaller than 20 MB.
 
-### Interactive Feature Test
+### Interactive Features
 
 Confirm that:
 
-- Flashcards flip correctly
+- Flashcards flip
 - Flashcard navigation works
 - Quiz answers can be selected
 - Quiz scoring works
-- Answer explanations appear
+- Explanations appear after quiz submission
 - Action points can be marked complete
 - The completion counter updates
 
-### History Test
+### History
 
 1. Generate a study pack.
 2. Refresh the page.
 3. Open Study History.
 4. Reopen the saved session.
-5. Delete a saved session.
-6. Test Clear History.
+5. Delete a session.
+6. Clear the history.
 
-### Export Test
+### Exports
 
 Confirm that:
 
-- Markdown files download successfully
-- The print view opens
-- The browser can save the document as a PDF
-- Only generated sections appear in the exported study pack
+- Markdown files download
+- Print view opens
+- Save as PDF works
+- Only generated sections appear
 
-### Error Handling Test
+### Error Handling
 
-Test the following safely:
+Test:
 
-- Submit an empty topic
-- Submit notes shorter than the minimum length
-- Select no study outputs
-- Upload an unsupported audio format
-- Upload an empty file
-- Cancel an active request
-- Temporarily use the browser’s offline mode to test network errors
+- Empty topics
+- Notes below the minimum length
+- No selected outputs
+- Unsupported audio
+- Empty audio
+- Offline browser mode
+- Request cancellation
+- Retry after a recoverable failure
 
 ---
 
-## Deployment
+## Vercel Deployment
 
-The production version is deployed on Vercel:
+The production application is hosted at:
 
 [https://studyvoice-ai.vercel.app](https://studyvoice-ai.vercel.app)
 
-### Vercel Environment Variable
-
-The Vercel project must include:
+The Vercel project requires this server environment variable:
 
 ```text
-OPENAI_API_KEY
+GROQ_API_KEY
 ```
 
-The variable should be enabled for:
+Enable it for:
 
 ```text
 Production
@@ -535,163 +476,106 @@ Preview
 Development
 ```
 
-After adding or changing the variable, redeploy the application.
+After changing the variable, redeploy the project.
 
-### Automatic Deployments
-
-The GitHub repository is connected to Vercel.
-
-The normal deployment workflow is:
+### Deployment Workflow
 
 ```text
 Edit in Visual Studio Code
 → Test locally
-→ Commit using GitHub Desktop
+→ Commit in GitHub Desktop
 → Push to GitHub
-→ Vercel deploys automatically
+→ Vercel redeploys automatically
 ```
 
 ---
 
 ## Security and Privacy
 
-StudyVoice AI follows these security practices:
+StudyVoice AI follows these practices:
 
-- The OpenAI API key is stored only in server environment variables.
-- The key is never included in client-side code.
-- `.env.local` is excluded from Git tracking.
-- User input is validated before AI processing.
-- AI responses are validated before rendering.
-- Audio files are checked for supported extensions and file size.
-- API responses use `Cache-Control: no-store`.
-- Provider error details are converted into safe public messages.
-- Generated study history is stored only in the user’s browser.
-- Uploaded or recorded audio is not saved in browser history.
-- Requests can be cancelled by the user.
+- The Groq API key remains server-side.
+- The API key is excluded from Git.
+- The API key is not exposed with a NEXT_PUBLIC variable.
+- User input is validated before processing.
+- Generated responses are validated using Zod.
+- Audio format and size are checked.
+- API responses use Cache-Control: no-store.
+- Internal provider errors are converted into safe messages.
+- Study history remains inside the user’s browser.
+- Audio recordings are not saved in study history.
+- Users can cancel active requests.
 
-### Important API-Key Rule
-
-Never commit the following file:
+Never commit:
 
 ```text
 .env.local
-```
-
-Never place the private key in a variable beginning with:
-
-```text
-NEXT_PUBLIC_
 ```
 
 ---
 
 ## Known Limitations
 
-- OpenAI API usage requires a valid API key and available API credit.
-- Study history is stored only in the current browser.
-- History does not synchronize across devices.
-- Clearing browser storage removes saved study sessions.
-- Voice-transcription quality depends on audio clarity and background noise.
-- Very long notes or recordings may require shorter input.
-- AI-generated content should be reviewed for academic accuracy.
-- The application does not currently include user accounts.
+- Groq free-tier access is rate limited.
+- Model availability may change.
+- Study history remains in one browser.
+- Clearing browser storage deletes study history.
+- Voice accuracy depends on audio quality.
+- Long recordings may require shorter files.
+- AI-generated material may contain mistakes.
+- The application does not include user accounts.
+- The application does not synchronize history across devices.
 - The application does not currently use a cloud database.
 
 ---
 
 ## Future Improvements
 
-Potential future enhancements include:
+Possible enhancements include:
 
 - User authentication
-- Cloud-synchronized study history
-- Supabase or PostgreSQL database storage
-- Study folders and subjects
-- Searchable session history
+- Cloud-synchronized history
+- Study folders
+- Searchable sessions
 - Editable transcripts
 - Editable flashcards
 - Timed quizzes
 - Progress analytics
-- Quiz-performance tracking
-- Spaced-repetition scheduling
-- Text-to-speech study support
-- Additional language support
-- Collaborative study packs
-- Shareable study links
-- Teacher and student dashboards
-- Additional AI-provider support
-
----
-
-## Academic and Educational Value
-
-StudyVoice AI demonstrates the practical use of artificial intelligence in education through:
-
-- Structured-output generation
-- Voice transcription
-- Multimodal input
-- Dynamic user-interface rendering
-- Schema validation
-- Interactive learning resources
-- Responsible API-key management
-- Error-resistant AI integration
-- Accessible browser-based study tools
-
-The application moves beyond a traditional chatbot by converting artificial-intelligence responses into purpose-built learning components.
+- Spaced repetition
+- Text-to-speech
+- Shareable study packs
+- Teacher dashboards
+- Additional AI providers
 
 ---
 
 ## Responsible Use
 
-StudyVoice AI is intended to support learning and revision.
+StudyVoice AI supports learning and revision.
 
 Students should:
 
-- Review generated information before using it academically
-- Compare important facts with trusted course materials
-- Avoid submitting generated work without understanding it
-- Follow institutional academic-integrity requirements
-- Avoid uploading confidential or personally sensitive information
-
-AI-generated materials may occasionally contain inaccuracies or omit relevant context.
+- Verify important information
+- Compare results with course materials
+- Understand generated work before using it
+- Follow academic-integrity rules
+- Avoid uploading confidential information
 
 ---
 
-## Repository
+## Project Links
 
-```text
-https://github.com/Lewis-123/studyvoice-ai
-```
-
-## Live Demo
+**Live application**
 
 ```text
 https://studyvoice-ai.vercel.app
 ```
 
----
+**GitHub repository**
 
-## License
-
-This project was developed for educational and academic purposes.
-
-Unless a separate license file is added, all rights remain with the project contributors.
-
----
-
-## Acknowledgements
-
-StudyVoice AI was created using:
-
-- Next.js
-- React
-- TypeScript
-- Tailwind CSS
-- Vercel AI SDK
-- OpenAI API
-- Zod
-- Vercel
-- GitHub
+```text
+https://github.com/Lewis-123/studyvoice-ai
+```
 
 ---
 
@@ -699,16 +583,23 @@ StudyVoice AI was created using:
 
 ```text
 Production deployment: Active
-Core AI study generation: Complete
-Voice recording: Complete
-Voice transcription: Complete
+Groq study generation: Complete
+Groq voice transcription: Complete
+Browser recording: Complete
 Generative user interface: Complete
-Interactive quiz: Complete
 Interactive flashcards: Complete
+Interactive quiz: Complete
 Action points: Complete
 Study history: Complete
 Markdown export: Complete
-PDF print export: Complete
+PDF export: Complete
 Error handling: Complete
-Loading and cancellation states: Complete
+Loading states: Complete
+Cancellation and retry: Complete
 ```
+
+---
+
+## License
+
+This project was developed for educational purposes. Unless a separate license is added, all rights remain with the project contributors.
