@@ -221,6 +221,31 @@ function isQuotaOrBillingError(
   );
 }
 
+function isJsonValidationError(
+  error: unknown,
+) {
+  const errorText =
+    getErrorSearchText(error);
+
+  return (
+    errorText.includes(
+      "json_validate_failed",
+    ) ||
+    errorText.includes(
+      "failed to generate json",
+    ) ||
+    errorText.includes(
+      "generated json does not match",
+    ) ||
+    errorText.includes(
+      "failed_generation",
+    ) ||
+    errorText.includes(
+      "schema validation",
+    )
+  );
+}
+
 function isUnsupportedAudioError(
   error: unknown,
 ) {
@@ -273,10 +298,8 @@ function mapAiError(
   if (LoadAPIKeyError.isInstance(error)) {
     return {
       code: "CONFIGURATION_ERROR",
-
       message:
         "The Groq AI service does not have a configured API key.",
-
       status: 503,
       retryable: false,
     };
@@ -287,10 +310,8 @@ function mapAiError(
   ) {
     return {
       code: "INVALID_AI_RESPONSE",
-
       message:
-        "The AI returned an incomplete or incorrectly formatted study pack.",
-
+        "The AI could not produce a complete structured study pack. Try again with fewer selected outputs.",
       status: 502,
       retryable: true,
     };
@@ -303,10 +324,8 @@ function mapAiError(
   ) {
     return {
       code: "TRANSCRIPTION_FAILED",
-
       message:
         "The recording could not be converted into a usable transcript.",
-
       status: 422,
       retryable: true,
     };
@@ -319,10 +338,8 @@ function mapAiError(
     if (statusCode === 401) {
       return {
         code: "INVALID_API_KEY",
-
         message:
           "The configured Groq API key is invalid, expired, or has been revoked.",
-
         status: 503,
         retryable: false,
       };
@@ -331,10 +348,8 @@ function mapAiError(
     if (statusCode === 402) {
       return {
         code: "API_CREDIT_EXHAUSTED",
-
         message:
-          "The Groq API account has no available quota or requires an account billing update.",
-
+          "The Groq account has no available quota or requires an account update.",
         status: 402,
         retryable: false,
       };
@@ -343,10 +358,8 @@ function mapAiError(
     if (statusCode === 403) {
       return {
         code: "API_PERMISSION_DENIED",
-
         message:
           "The Groq API key does not have permission to use the requested model.",
-
         status: 503,
         retryable: false,
       };
@@ -355,12 +368,23 @@ function mapAiError(
     if (statusCode === 413) {
       return {
         code: "FILE_TOO_LARGE",
-
         message:
           "The audio file is larger than the provider's accepted upload limit.",
-
         status: 413,
         retryable: false,
+      };
+    }
+
+    if (
+      statusCode === 400 &&
+      isJsonValidationError(error)
+    ) {
+      return {
+        code: "INVALID_AI_RESPONSE",
+        message:
+          "Groq could not produce JSON matching the study-pack structure. Try again or select fewer study outputs.",
+        status: 502,
+        retryable: true,
       };
     }
 
@@ -370,10 +394,8 @@ function mapAiError(
     ) {
       return {
         code: "API_CREDIT_EXHAUSTED",
-
         message:
-          "The Groq API account has no available quota or has reached its account spending limit.",
-
+          "The Groq account has no available quota or has reached its account spending limit.",
         status: 402,
         retryable: false,
       };
@@ -382,10 +404,8 @@ function mapAiError(
     if (statusCode === 429) {
       return {
         code: "RATE_LIMITED",
-
         message:
           "The Groq free-tier rate limit has been reached. Wait briefly and try again.",
-
         status: 429,
         retryable: true,
       };
@@ -398,10 +418,8 @@ function mapAiError(
     ) {
       return {
         code: "UNSUPPORTED_AUDIO",
-
         message:
-          "Groq could not process the selected audio format. Use a supported audio recording.",
-
+          "Groq could not process the selected audio format.",
         status: 415,
         retryable: false,
       };
@@ -413,10 +431,8 @@ function mapAiError(
     ) {
       return {
         code: "TRANSCRIPTION_FAILED",
-
         message:
           "Groq could not produce a usable transcript from the recording.",
-
         status: 422,
         retryable: true,
       };
@@ -428,10 +444,8 @@ function mapAiError(
     ) {
       return {
         code: "REQUEST_TIMEOUT",
-
         message:
           "The Groq AI service took too long to respond.",
-
         status: 504,
         retryable: true,
       };
@@ -443,10 +457,8 @@ function mapAiError(
     ) {
       return {
         code: "PROVIDER_UNAVAILABLE",
-
         message:
           "The Groq AI service is temporarily unavailable.",
-
         status: 503,
         retryable: true,
       };
@@ -455,10 +467,8 @@ function mapAiError(
     if (!statusCode) {
       return {
         code: "NETWORK_ERROR",
-
         message:
           "The server could not connect to the Groq AI service.",
-
         status: 503,
         retryable: true,
       };
@@ -466,11 +476,8 @@ function mapAiError(
 
     return {
       code: "UNKNOWN_ERROR",
-
       message: `The ${operation} request was rejected by the Groq AI service.`,
-
       status: 502,
-
       retryable:
         error.isRetryable === true,
     };
@@ -479,10 +486,8 @@ function mapAiError(
   if (isAbortLikeError(error)) {
     return {
       code: "REQUEST_TIMEOUT",
-
       message:
         "The AI request was stopped because it took too long.",
-
       status: 504,
       retryable: true,
     };
@@ -490,9 +495,7 @@ function mapAiError(
 
   return {
     code: "UNKNOWN_ERROR",
-
     message: `The ${operation} request failed unexpectedly.`,
-
     status: 500,
     retryable: true,
   };
