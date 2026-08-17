@@ -1,213 +1,85 @@
 "use client";
 
-import Link from "next/link";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import Link from "next/link"; import { useEffect, useMemo, useRef,
+useState, type FormEvent, } from "react";
 
 import StudyExportActions from "@/components/study-export-actions";
-import StudyHistory from "@/components/study-history";
-import StudyResults from "@/components/study-results";
-import VoiceRecorder from "@/components/voice-recorder";
-import {
-  studyPackSchema,
-  type OutputId,
-  type StudyPack,
-} from "@/lib/study-schema";
-import {
-  MAX_SAVED_STUDY_SESSIONS,
-  clearSavedStudySessions,
-  createStudySessionId,
-  loadSavedStudySessions,
-  saveStudySessions,
-  type SavedStudySession,
-  type StudySessionEducationLevel,
-  type StudySessionInputMode,
-  type StudySessionQuizDifficulty,
-  type StudyTranscript,
-} from "@/lib/study-session";
+import StudyHistory from "@/components/study-history"; import
+StudyResults from "@/components/study-results"; import VoiceRecorder
+from "@/components/voice-recorder"; import { studyPackSchema, type
+OutputId, type StudyPack, } from "@/lib/study-schema"; import {
+MAX_SAVED_STUDY_SESSIONS, clearSavedStudySessions, createStudySessionId,
+loadSavedStudySessions, saveStudySessions, type SavedStudySession, type
+StudySessionEducationLevel, type StudySessionInputMode, type
+StudySessionQuizDifficulty, type StudyTranscript, } from
+"@/lib/study-session";
 
-type InputMode =
-  StudySessionInputMode;
+type InputMode = StudySessionInputMode;
 
-type EducationLevel =
-  StudySessionEducationLevel;
+type EducationLevel = StudySessionEducationLevel;
 
-type QuizDifficulty =
-  StudySessionQuizDifficulty;
+type QuizDifficulty = StudySessionQuizDifficulty;
 
-type GenerationPhase =
-  | "idle"
-  | "transcribing"
-  | "generating";
+type GenerationPhase = | "idle" | "transcribing" | "generating";
 
-type StudyOutput = {
-  id: OutputId;
-  title: string;
-  description: string;
-  icon: string;
-};
+type StudyOutput = { id: OutputId; title: string; description: string;
+icon: string; };
 
-const MAX_AUDIO_SIZE =
-  20 * 1024 * 1024;
+const MAX_AUDIO_SIZE = 20 * 1024 * 1024;
 
-const CLIENT_REQUEST_TIMEOUT =
-  70_000;
+const CLIENT_REQUEST_TIMEOUT = 70_000;
 
 const LONG_REQUEST_SECONDS = 20;
 
-const SUPPORTED_AUDIO_EXTENSIONS =
-  new Set([
-    "mp3",
-    "mp4",
-    "mpeg",
-    "mpga",
-    "m4a",
-    "wav",
-    "webm",
-  ]);
+const SUPPORTED_AUDIO_EXTENSIONS = new Set([ "mp3", "mp4", "mpeg",
+"mpga", "m4a", "wav", "webm", ]);
 
-const inputModes: Array<{
-  id: InputMode;
-  title: string;
-  description: string;
-  icon: string;
-}> = [
-  {
-    id: "topic",
-    title: "Enter topic",
-    description:
-      "Generate a study pack from a subject or question.",
-    icon: "⌨️",
-  },
-  {
-    id: "notes",
-    title: "Paste notes",
-    description:
-      "Transform written notes into revision materials.",
-    icon: "📝",
-  },
-  {
-    id: "voice",
-    title: "Voice note",
-    description:
-      "Record or upload audio for transcription.",
-    icon: "🎙️",
-  },
-];
+const inputModes: Array<{ id: InputMode; title: string; description:
+string; icon: string; }> = [ { id: "topic", title: "Enter topic",
+description: "Generate a study pack from a subject or question.", icon:
+"⌨️", }, { id: "notes", title: "Paste notes", description: "Transform
+written notes into revision materials.", icon: "📝", }, { id: "voice",
+title: "Voice note", description: "Record or upload audio for
+transcription.", icon: "🎙️", },];
 
-const studyOutputs: StudyOutput[] = [
-  {
-    id: "explanation",
-    title: "Explanation",
-    description:
-      "A clear, detailed explanation of the material.",
-    icon: "💡",
-  },
-  {
-    id: "summary",
-    title: "Summary",
-    description:
-      "A concise overview of the main information.",
-    icon: "📄",
-  },
-  {
-    id: "keyPoints",
-    title: "Key points",
-    description:
-      "The most important concepts and definitions.",
-    icon: "📌",
-  },
-  {
-    id: "flashcards",
-    title: "Flashcards",
-    description:
-      "Interactive question-and-answer revision cards.",
-    icon: "🗂️",
-  },
-  {
-    id: "quiz",
-    title: "Quiz",
-    description:
-      "Multiple-choice questions with explanations.",
-    icon: "✅",
-  },
-  {
-    id: "revisionQuestions",
-    title: "Revision questions",
-    description:
-      "Open-ended questions for deeper practice.",
-    icon: "🧠",
-  },
-  {
-    id: "actionPoints",
-    title: "Action points",
-    description:
-      "Practical tasks with priorities and reasons.",
-    icon: "🎯",
-  },
-];
+const studyOutputs: StudyOutput[] = [ { id: "explanation", title:
+"Explanation", description: "A clear, detailed explanation of the
+material.", icon: "💡", }, { id: "summary", title: "Summary",
+description: "A concise overview of the main information.", icon: "📄",
+}, { id: "keyPoints", title: "Key points", description: "The most
+important concepts and definitions.", icon: "📌", }, { id: "flashcards",
+title: "Flashcards", description: "Interactive question-and-answer
+revision cards.", icon: "🗂️", }, { id: "quiz", title: "Quiz",
+description: "Multiple-choice questions with explanations.", icon: "✅",
+}, { id: "revisionQuestions", title: "Revision questions", description:
+"Open-ended questions for deeper practice.", icon: "🧠", }, { id:
+"actionPoints", title: "Action points", description: "Practical tasks
+with priorities and reasons.", icon: "🎯", },];
 
-const defaultOutputs: OutputId[] = [
-  "explanation",
-  "summary",
-  "flashcards",
-  "quiz",
-  "actionPoints",
-];
+const defaultOutputs: OutputId[] = [ "explanation", "summary",
+"flashcards", "quiz", "actionPoints",];
 
-class StudyRequestError extends Error {
-  code: string;
-  retryable: boolean;
+class StudyRequestError extends Error { code: string; retryable:
+boolean;
 
-  constructor(
-    code: string,
-    message: string,
-    retryable: boolean,
-  ) {
-    super(message);
+constructor( code: string, message: string, retryable: boolean, ) {
+super(message);
 
     this.name = "StudyRequestError";
     this.code = code;
     this.retryable = retryable;
-  }
-}
 
-function getFileExtension(
-  filename: string,
-) {
-  return (
-    filename
-      .split(".")
-      .pop()
-      ?.trim()
-      .toLowerCase() ?? ""
-  );
-}
+} }
 
-function isSupportedAudioFile(
-  file: File,
-) {
-  return SUPPORTED_AUDIO_EXTENSIONS.has(
-    getFileExtension(file.name),
-  );
-}
+function getFileExtension( filename: string, ) { return ( filename
+.split(".") .pop() ?.trim() .toLowerCase() ?? "" ); }
 
-function parseApiError(
-  responseData: unknown,
-  status: number,
-) {
-  if (
-    typeof responseData === "object" &&
-    responseData !== null &&
-    "error" in responseData
-  ) {
-    const errorValue =
-      responseData.error;
+function isSupportedAudioFile( file: File, ) { return
+SUPPORTED_AUDIO_EXTENSIONS.has( getFileExtension(file.name), ); }
+
+function parseApiError( responseData: unknown, status: number, ) { if (
+typeof responseData === "object" && responseData !== null && "error" in
+responseData ) { const errorValue = responseData.error;
 
     if (
       typeof errorValue === "object" &&
@@ -242,92 +114,43 @@ function parseApiError(
         status >= 500,
       );
     }
-  }
 
-  if (status === 402) {
-    return new StudyRequestError(
-      "API_CREDIT_EXHAUSTED",
-      "The API account has no available credit.",
-      false,
-    );
-  }
-
-  if (status === 413) {
-    return new StudyRequestError(
-      "FILE_TOO_LARGE",
-      "The uploaded file is too large.",
-      false,
-    );
-  }
-
-  if (status === 415) {
-    return new StudyRequestError(
-      "UNSUPPORTED_AUDIO",
-      "The selected audio format is not supported.",
-      false,
-    );
-  }
-
-  if (status === 429) {
-    return new StudyRequestError(
-      "RATE_LIMITED",
-      "The service is temporarily receiving too many requests.",
-      true,
-    );
-  }
-
-  if (status === 504) {
-    return new StudyRequestError(
-      "REQUEST_TIMEOUT",
-      "The request took too long to complete.",
-      true,
-    );
-  }
-
-  return new StudyRequestError(
-    "UNKNOWN_ERROR",
-    "The request could not be completed.",
-    status >= 500,
-  );
 }
 
-async function requestJson<T>({
-  url,
-  options,
-  externalSignal,
-  timeoutMilliseconds,
-}: {
-  url: string;
-  options: RequestInit;
-  externalSignal: AbortSignal;
-  timeoutMilliseconds: number;
-}): Promise<T> {
-  const controller =
-    new AbortController();
+if (status === 402) { return new StudyRequestError(
+"API_CREDIT_EXHAUSTED", "The API account has no available credit.",
+false, ); }
 
-  let didTimeout = false;
+if (status === 413) { return new StudyRequestError( "FILE_TOO_LARGE",
+"The uploaded file is too large.", false, ); }
 
-  function abortFromExternalSignal() {
-    if (!controller.signal.aborted) {
-      controller.abort();
-    }
-  }
+if (status === 415) { return new StudyRequestError( "UNSUPPORTED_AUDIO",
+"The selected audio format is not supported.", false, ); }
 
-  if (externalSignal.aborted) {
-    abortFromExternalSignal();
-  } else {
-    externalSignal.addEventListener(
-      "abort",
-      abortFromExternalSignal,
-      {
-        once: true,
-      },
-    );
-  }
+if (status === 429) { return new StudyRequestError( "RATE_LIMITED", "The
+service is temporarily receiving too many requests.", true, ); }
 
-  const timeoutId =
-    window.setTimeout(() => {
-      didTimeout = true;
+if (status === 504) { return new StudyRequestError( "REQUEST_TIMEOUT",
+"The request took too long to complete.", true, ); }
+
+return new StudyRequestError( "UNKNOWN_ERROR", "The request could not be
+completed.", status >= 500, ); }
+
+async function requestJson({ url, options, externalSignal,
+timeoutMilliseconds, }: { url: string; options: RequestInit;
+externalSignal: AbortSignal; timeoutMilliseconds: number; }): Promise {
+const controller = new AbortController();
+
+let didTimeout = false;
+
+function abortFromExternalSignal() { if (!controller.signal.aborted) {
+controller.abort(); } }
+
+if (externalSignal.aborted) { abortFromExternalSignal(); } else {
+externalSignal.addEventListener( "abort", abortFromExternalSignal, {
+once: true, }, ); }
+
+const timeoutId = window.setTimeout(() => { didTimeout = true;
 
       if (
         !controller.signal.aborted
@@ -336,14 +159,8 @@ async function requestJson<T>({
       }
     }, timeoutMilliseconds);
 
-  try {
-    const response = await fetch(
-      url,
-      {
-        ...options,
-        signal: controller.signal,
-      },
-    );
+try { const response = await fetch( url, { …options, signal:
+controller.signal, }, );
 
     const rawResponse =
       await response.text();
@@ -367,13 +184,9 @@ async function requestJson<T>({
     }
 
     return responseData as T;
-  } catch (error) {
-    if (
-      error instanceof
-      StudyRequestError
-    ) {
-      throw error;
-    }
+
+} catch (error) { if ( error instanceof StudyRequestError ) { throw
+error; }
 
     if (didTimeout) {
       throw new StudyRequestError(
@@ -410,46 +223,28 @@ async function requestJson<T>({
       "An unexpected request error occurred.",
       true,
     );
-  } finally {
-    window.clearTimeout(timeoutId);
+
+} finally { window.clearTimeout(timeoutId);
 
     externalSignal.removeEventListener(
       "abort",
       abortFromExternalSignal,
     );
-  }
-}
 
-function normalizeClientError(
-  error: unknown,
-) {
-  if (
-    error instanceof StudyRequestError
-  ) {
-    return error;
-  }
+} }
 
-  if (error instanceof Error) {
-    return new StudyRequestError(
-      "UNKNOWN_ERROR",
-      error.message,
-      true,
-    );
-  }
+function normalizeClientError( error: unknown, ) { if ( error instanceof
+StudyRequestError ) { return error; }
 
-  return new StudyRequestError(
-    "UNKNOWN_ERROR",
-    "An unexpected error occurred.",
-    true,
-  );
-}
+if (error instanceof Error) { return new StudyRequestError(
+"UNKNOWN_ERROR", error.message, true, ); }
 
-function getRecoveryMessage(
-  code: string,
-) {
-  switch (code) {
-    case "CONFIGURATION_ERROR":
-      return "Create .env.local, add OPENAI_API_KEY, and restart the development server.";
+return new StudyRequestError( "UNKNOWN_ERROR", "An unexpected error
+occurred.", true, ); }
+
+function getRecoveryMessage( code: string, ) { switch (code) { case
+"CONFIGURATION_ERROR": return "Create .env.local, add OPENAI_API_KEY,
+and restart the development server.";
 
     case "INVALID_API_KEY":
       return "Create a new API key, update .env.local, and restart the application.";
@@ -492,162 +287,75 @@ function getRecoveryMessage(
 
     default:
       return "Review the message, correct the issue, and try again.";
-  }
-}
 
-function formatElapsedTime(
-  totalSeconds: number,
-) {
-  const minutes = Math.floor(
-    totalSeconds / 60,
-  );
+} }
 
-  const seconds =
-    totalSeconds % 60;
+function formatElapsedTime( totalSeconds: number, ) { const minutes =
+Math.floor( totalSeconds / 60, );
 
-  return `${minutes}:${seconds
-    .toString()
-    .padStart(2, "0")}`;
-}
+const seconds = totalSeconds % 60;
 
-export default function StudyWorkspace() {
-  const activeRequestRef =
-    useRef<AbortController | null>(
-      null,
-    );
+return ${minutes}:${seconds     .toString()     .padStart(2, "0")}; }
 
-  const [inputMode, setInputMode] =
-    useState<InputMode>("topic");
+export default function StudyWorkspace() { const activeRequestRef =
+useRef<AbortController | null>( null, );
 
-  const [topic, setTopic] =
-    useState("");
+const [inputMode, setInputMode] = useState("topic");
 
-  const [notes, setNotes] =
-    useState("");
+const [topic, setTopic] = useState("");
 
-  const [audioFile, setAudioFile] =
-    useState<File | null>(null);
+const [notes, setNotes] = useState("");
 
-  const [
-    educationLevel,
-    setEducationLevel,
-  ] = useState<EducationLevel>(
-    "beginner",
-  );
+const [audioFile, setAudioFile] = useState<File | null>(null);
 
-  const [
-    difficulty,
-    setDifficulty,
-  ] = useState<QuizDifficulty>(
-    "medium",
-  );
+const [ educationLevel, setEducationLevel, ] = useState( "beginner", );
 
-  const [
-    selectedOutputs,
-    setSelectedOutputs,
-  ] = useState<OutputId[]>(
-    defaultOutputs,
-  );
+const [ difficulty, setDifficulty, ] = useState( "medium", );
 
-  const [
-    requestError,
-    setRequestError,
-  ] =
-    useState<StudyRequestError | null>(
-      null,
-    );
+const [ selectedOutputs, setSelectedOutputs, ] = useState<OutputId[]>(
+defaultOutputs, );
 
-  const [
-    statusMessage,
-    setStatusMessage,
-  ] = useState("");
+const [ requestError, setRequestError, ] = useState<StudyRequestError |
+null>( null, );
 
-  const [
-    isPrepared,
-    setIsPrepared,
-  ] = useState(false);
+const [ statusMessage, setStatusMessage, ] = useState("");
 
-  const [
-    isGenerating,
-    setIsGenerating,
-  ] = useState(false);
+const [ isPrepared, setIsPrepared, ] = useState(false);
 
-  const [
-    isRecording,
-    setIsRecording,
-  ] = useState(false);
+const [ isGenerating, setIsGenerating, ] = useState(false);
 
-  const [
-    generationPhase,
-    setGenerationPhase,
-  ] =
-    useState<GenerationPhase>("idle");
+const [ isRecording, setIsRecording, ] = useState(false);
 
-  const [
-    elapsedSeconds,
-    setElapsedSeconds,
-  ] = useState(0);
+const [ generationPhase, setGenerationPhase, ] = useState("idle");
 
-  const [
-    transcript,
-    setTranscript,
-  ] =
-    useState<StudyTranscript | null>(
-      null,
-    );
+const [ elapsedSeconds, setElapsedSeconds, ] = useState(0);
 
-  const [
-    studyPack,
-    setStudyPack,
-  ] =
-    useState<StudyPack | null>(
-      null,
-    );
+const [ transcript, setTranscript, ] = useState<StudyTranscript | null>(
+null, );
 
-  const [
-    generatedOutputs,
-    setGeneratedOutputs,
-  ] = useState<OutputId[]>([]);
+const [ studyPack, setStudyPack, ] = useState<StudyPack | null>( null,
+);
 
-  const [
-    savedSessions,
-    setSavedSessions,
-  ] = useState<
-    SavedStudySession[]
-  >([]);
+const [ generatedOutputs, setGeneratedOutputs, ] =
+useState<OutputId[]>([]);
 
-  const [
-    activeSessionId,
-    setActiveSessionId,
-  ] =
-    useState<string | null>(
-      null,
-    );
+const [ savedSessions, setSavedSessions, ] = useState<
+SavedStudySession[] >([]);
 
-  const controlsDisabled =
-    isGenerating || isRecording;
+const [ activeSessionId, setActiveSessionId, ] = useState<string |
+null>( null, );
 
-  const generationMessage =
-    generationPhase ===
-    "transcribing"
-      ? "Transcribing voice note..."
-      : "Generating study pack...";
+const controlsDisabled = isGenerating || isRecording;
 
-  const isTakingLong =
-    isGenerating &&
-    elapsedSeconds >=
-      LONG_REQUEST_SECONDS;
+const generationMessage = generationPhase === "transcribing" ?
+"Transcribing voice note…" : "Generating study pack…";
 
-  useEffect(() => {
-    setSavedSessions(
-      loadSavedStudySessions(),
-    );
-  }, []);
+const isTakingLong = isGenerating && elapsedSeconds >=
+LONG_REQUEST_SECONDS;
 
-  useEffect(() => {
-    if (!isGenerating) {
-      return;
-    }
+useEffect(() => { setSavedSessions( loadSavedStudySessions(), ); }, []);
+
+useEffect(() => { if (!isGenerating) { return; }
 
     const timerId =
       window.setInterval(() => {
@@ -660,21 +368,14 @@ export default function StudyWorkspace() {
     return () => {
       window.clearInterval(timerId);
     };
-  }, [isGenerating]);
 
-  useEffect(() => {
-    return () => {
-      activeRequestRef.current?.abort();
-    };
-  }, []);
+}, [isGenerating]);
 
-  const sourceTitle = useMemo(() => {
-    if (inputMode === "topic") {
-      return (
-        topic.trim() ||
-        "No topic entered"
-      );
-    }
+useEffect(() => { return () => { activeRequestRef.current?.abort(); };
+}, []);
+
+const sourceTitle = useMemo(() => { if (inputMode === "topic") { return
+( topic.trim() || "No topic entered" ); }
 
     if (inputMode === "notes") {
       const cleanNotes =
@@ -696,18 +397,11 @@ export default function StudyWorkspace() {
       audioFile?.name ??
       "No audio recording selected"
     );
-  }, [
-    audioFile,
-    inputMode,
-    notes,
-    topic,
-  ]);
 
-  const resultSourceTitle =
-    useMemo(() => {
-      if (!activeSessionId) {
-        return sourceTitle;
-      }
+}, [ audioFile, inputMode, notes, topic, ]);
+
+const resultSourceTitle = useMemo(() => { if (!activeSessionId) { return
+sourceTitle; }
 
       return (
         savedSessions.find(
@@ -723,44 +417,24 @@ export default function StudyWorkspace() {
       sourceTitle,
     ]);
 
-  function clearStatusMessages() {
-    setRequestError(null);
-    setStatusMessage("");
-    setIsPrepared(false);
-  }
+function clearStatusMessages() { setRequestError(null);
+setStatusMessage(""); setIsPrepared(false); }
 
-  function clearGeneratedContent() {
-    setStudyPack(null);
-    setGeneratedOutputs([]);
-    setActiveSessionId(null);
-  }
+function clearGeneratedContent() { setStudyPack(null);
+setGeneratedOutputs([]); setActiveSessionId(null); }
 
-  function resetGeneratedResults() {
-    clearStatusMessages();
-    clearGeneratedContent();
-  }
+function resetGeneratedResults() { clearStatusMessages();
+clearGeneratedContent(); }
 
-  function selectInputMode(
-    mode: InputMode,
-  ) {
-    if (controlsDisabled) {
-      return;
-    }
+function selectInputMode( mode: InputMode, ) { if (controlsDisabled) {
+return; }
 
-    setInputMode(mode);
-    resetGeneratedResults();
+setInputMode(mode); resetGeneratedResults();
 
-    if (mode !== "voice") {
-      setTranscript(null);
-    }
-  }
+if (mode !== "voice") { setTranscript(null); setAudioFile(null); } }
 
-  function toggleOutput(
-    outputId: OutputId,
-  ) {
-    if (controlsDisabled) {
-      return;
-    }
+function toggleOutput( outputId: OutputId, ) { if (controlsDisabled) {
+return; }
 
     setSelectedOutputs(
       (currentOutputs) => {
@@ -783,12 +457,10 @@ export default function StudyWorkspace() {
     );
 
     resetGeneratedResults();
-  }
 
-  function selectAllOutputs() {
-    if (controlsDisabled) {
-      return;
-    }
+}
+
+function selectAllOutputs() { if (controlsDisabled) { return; }
 
     setSelectedOutputs(
       studyOutputs.map(
@@ -797,23 +469,18 @@ export default function StudyWorkspace() {
     );
 
     resetGeneratedResults();
-  }
 
-  function clearAllOutputs() {
-    if (controlsDisabled) {
-      return;
-    }
+}
+
+function clearAllOutputs() { if (controlsDisabled) { return; }
 
     setSelectedOutputs([]);
     resetGeneratedResults();
-  }
 
-  function handleVoiceFileReady(
-    file: File,
-  ) {
-    clearStatusMessages();
-    clearGeneratedContent();
-    setTranscript(null);
+}
+
+function handleVoiceFileReady( file: File, ) { clearStatusMessages();
+clearGeneratedContent(); setTranscript(null);
 
     if (
       !isSupportedAudioFile(file)
@@ -863,21 +530,14 @@ export default function StudyWorkspace() {
     }
 
     setAudioFile(file);
-  }
 
-  function handleVoiceFileRemove() {
-    setAudioFile(null);
-    setTranscript(null);
-    resetGeneratedResults();
-  }
+}
 
-  function handleVoiceError(
-    message: string,
-  ) {
-    if (!message) {
-      setRequestError(null);
-      return;
-    }
+function handleVoiceFileRemove() { setAudioFile(null);
+setTranscript(null); resetGeneratedResults(); }
+
+function handleVoiceError( message: string, ) { if (!message) {
+setRequestError(null); return; }
 
     setRequestError(
       new StudyRequestError(
@@ -890,12 +550,11 @@ export default function StudyWorkspace() {
     setStatusMessage("");
     setIsPrepared(false);
     clearGeneratedContent();
-  }
 
-  function handleRecordingChange(
-    recording: boolean,
-  ) {
-    setIsRecording(recording);
+}
+
+function handleRecordingChange( recording: boolean, ) {
+setIsRecording(recording);
 
     if (recording) {
       setRequestError(null);
@@ -904,15 +563,12 @@ export default function StudyWorkspace() {
       setTranscript(null);
       clearGeneratedContent();
     }
-  }
 
-  function validateInput() {
-    if (
-      inputMode === "topic" &&
-      topic.trim().length < 3
-    ) {
-      return "Enter a topic containing at least three characters.";
-    }
+}
+
+function validateInput() { if ( inputMode === "topic" &&
+topic.trim().length < 3 ) { return "Enter a topic containing at least
+three characters."; }
 
     if (
       inputMode === "notes" &&
@@ -945,15 +601,11 @@ export default function StudyWorkspace() {
     }
 
     return "";
-  }
 
-  async function transcribeAudio(
-    file: File,
-    signal: AbortSignal,
-  ) {
-    setGenerationPhase(
-      "transcribing",
-    );
+}
+
+async function transcribeAudio( file: File, signal: AbortSignal, ) {
+setGenerationPhase( "transcribing", );
 
     setTranscript(null);
 
@@ -1032,18 +684,12 @@ export default function StudyWorkspace() {
     );
 
     return transcriptResult;
-  }
 
-  async function generateStudyPack(
-    studyInputMode:
-      | "topic"
-      | "notes",
-    content: string,
-    signal: AbortSignal,
-  ) {
-    setGenerationPhase(
-      "generating",
-    );
+}
+
+async function generateStudyPack( studyInputMode: | "topic" | "notes",
+content: string, signal: AbortSignal, ) { setGenerationPhase(
+"generating", );
 
     const responseData =
       await requestJson<unknown>({
@@ -1089,24 +735,14 @@ export default function StudyWorkspace() {
     }
 
     return validationResult.data;
-  }
 
-  function saveGeneratedSession({
-    generatedStudyPack,
-    sourceContent,
-    originalInputMode,
-    generatedTranscript,
-  }: {
-    generatedStudyPack: StudyPack;
-    sourceContent: string;
-    originalInputMode: InputMode;
-    generatedTranscript:
-      | StudyTranscript
-      | null;
-  }) {
-    const newSession: SavedStudySession =
-      {
-        id: createStudySessionId(),
+}
+
+function saveGeneratedSession({ generatedStudyPack, sourceContent,
+originalInputMode, generatedTranscript, }: { generatedStudyPack:
+StudyPack; sourceContent: string; originalInputMode: InputMode;
+generatedTranscript: | StudyTranscript | null; }) { const newSession:
+SavedStudySession = { id: createStudySessionId(),
 
         createdAt:
           new Date().toISOString(),
@@ -1159,14 +795,11 @@ export default function StudyWorkspace() {
         ? "Study pack saved to your browser history."
         : "The study pack was generated, but browser history could not be updated.",
     );
-  }
 
-  function openSavedSession(
-    session: SavedStudySession,
-  ) {
-    if (controlsDisabled) {
-      return;
-    }
+}
+
+function openSavedSession( session: SavedStudySession, ) { if
+(controlsDisabled) { return; }
 
     setRequestError(null);
     setIsPrepared(true);
@@ -1230,17 +863,11 @@ export default function StudyWorkspace() {
           block: "start",
         });
     }, 100);
-  }
 
-  function deleteSavedSession(
-    sessionId: string,
-  ) {
-    const nextSessions =
-      savedSessions.filter(
-        (session) =>
-          session.id !==
-          sessionId,
-      );
+}
+
+function deleteSavedSession( sessionId: string, ) { const nextSessions =
+savedSessions.filter( (session) => session.id !== sessionId, );
 
     saveStudySessions(
       nextSessions,
@@ -1260,10 +887,10 @@ export default function StudyWorkspace() {
     setStatusMessage(
       "Saved session deleted.",
     );
-  }
 
-  function clearStudyHistory() {
-    clearSavedStudySessions();
+}
+
+function clearStudyHistory() { clearSavedStudySessions();
 
     setSavedSessions([]);
     setActiveSessionId(null);
@@ -1271,16 +898,12 @@ export default function StudyWorkspace() {
     setStatusMessage(
       "Study history cleared.",
     );
-  }
 
-  function cancelActiveRequest() {
-    activeRequestRef.current?.abort();
-  }
+}
 
-  async function runGeneration() {
-    if (isGenerating) {
-      return;
-    }
+function cancelActiveRequest() { activeRequestRef.current?.abort(); }
+
+async function runGeneration() { if (isGenerating) { return; }
 
     if (isRecording) {
       setRequestError(
@@ -1351,7 +974,7 @@ export default function StudyWorkspace() {
       if (
         inputMode === "voice"
       ) {
-        if (!audioFile) {
+        if (!(audioFile instanceof File)) {
           throw new StudyRequestError(
             "VALIDATION_ERROR",
             "Record or select an audio file before continuing.",
@@ -1457,20 +1080,16 @@ export default function StudyWorkspace() {
 
       setElapsedSeconds(0);
     }
-  }
 
-  function handleSubmit(
-    event: FormEvent<HTMLFormElement>,
-  ) {
-    event.preventDefault();
+}
+
+function handleSubmit( event: FormEvent, ) { event.preventDefault();
 
     void runGeneration();
-  }
 
-  return (
-    <main className="min-h-screen bg-slate-100 text-slate-950">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 lg:px-8">
+}
+
+return (
           <Link
             href="/"
             className="flex items-center gap-3"
@@ -2354,5 +1973,5 @@ export default function StudyWorkspace() {
         )}
       </section>
     </main>
-  );
-}
+
+); }
