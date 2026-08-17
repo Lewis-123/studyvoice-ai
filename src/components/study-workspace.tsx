@@ -1,18 +1,18 @@
-“use client”;
+"use client";
 
-import Link from “next/link”; import { useEffect, useMemo, useRef,
-useState, type FormEvent, } from “react”;
+import Link from "next/link"; import { useEffect, useMemo, useRef,
+useState, type FormEvent, } from "react";
 
-import StudyExportActions from “@/components/study-export-actions”;
-import StudyHistory from “@/components/study-history”; import
-StudyResults from “@/components/study-results”; import VoiceRecorder
-from “@/components/voice-recorder”; import { studyPackSchema, type
-OutputId, type StudyPack, } from “@/lib/study-schema”; import {
+import StudyExportActions from "@/components/study-export-actions";
+import StudyHistory from "@/components/study-history"; import
+StudyResults from "@/components/study-results"; import VoiceRecorder
+from "@/components/voice-recorder"; import { studyPackSchema, type
+OutputId, type StudyPack, } from "@/lib/study-schema"; import {
 MAX_SAVED_STUDY_SESSIONS, clearSavedStudySessions, createStudySessionId,
 loadSavedStudySessions, saveStudySessions, type SavedStudySession, type
 StudySessionEducationLevel, type StudySessionInputMode, type
 StudySessionQuizDifficulty, type StudyTranscript, } from
-“@/lib/study-session”;
+"@/lib/study-session";
 
 type InputMode = StudySessionInputMode;
 
@@ -20,7 +20,7 @@ type EducationLevel = StudySessionEducationLevel;
 
 type QuizDifficulty = StudySessionQuizDifficulty;
 
-type GenerationPhase = | “idle” | “transcribing” | “generating”;
+type GenerationPhase = | "idle" | "transcribing" | "generating";
 
 type StudyOutput = { id: OutputId; title: string; description: string;
 icon: string; };
@@ -31,33 +31,33 @@ const CLIENT_REQUEST_TIMEOUT = 70_000;
 
 const LONG_REQUEST_SECONDS = 20;
 
-const SUPPORTED_AUDIO_EXTENSIONS = new Set([ “mp3”, “mp4”, “mpeg”,
-“mpga”, “m4a”, “wav”, “webm”, ]);
+const SUPPORTED_AUDIO_EXTENSIONS = new Set([ "mp3", "mp4", "mpeg",
+"mpga", "m4a", "wav", "webm", ]);
 
 const inputModes: Array<{ id: InputMode; title: string; description:
-string; icon: string; }> = [ { id: “topic”, title: “Enter topic”,
-description: “Generate a study pack from a subject or question.”, icon:
-“⌨️”, }, { id: “notes”, title: “Paste notes”, description: “Transform
-written notes into revision materials.”, icon: “📝”, }, { id: “voice”,
-title: “Voice note”, description: “Record or upload audio for
-transcription.”, icon: “🎙️”, },];
+string; icon: string; }> = [ { id: "topic", title: "Enter topic",
+description: "Generate a study pack from a subject or question.", icon:
+"⌨️", }, { id: "notes", title: "Paste notes", description: "Transform
+written notes into revision materials.", icon: "📝", }, { id: "voice",
+title: "Voice note", description: "Record or upload audio for
+transcription.", icon: "🎙️", },];
 
-const studyOutputs: StudyOutput[] = [ { id: “explanation”, title:
-“Explanation”, description: “A clear, detailed explanation of the
-material.”, icon: “💡”, }, { id: “summary”, title: “Summary”,
-description: “A concise overview of the main information.”, icon: “📄”,
-}, { id: “keyPoints”, title: “Key points”, description: “The most
-important concepts and definitions.”, icon: “📌”, }, { id: “flashcards”,
-title: “Flashcards”, description: “Interactive question-and-answer
-revision cards.”, icon: “🗂️”, }, { id: “quiz”, title: “Quiz”,
-description: “Multiple-choice questions with explanations.”, icon: “✅”,
-}, { id: “revisionQuestions”, title: “Revision questions”, description:
-“Open-ended questions for deeper practice.”, icon: “🧠”, }, { id:
-“actionPoints”, title: “Action points”, description: “Practical tasks
-with priorities and reasons.”, icon: “🎯”, },];
+const studyOutputs: StudyOutput[] = [ { id: "explanation", title:
+"Explanation", description: "A clear, detailed explanation of the
+material.", icon: "💡", }, { id: "summary", title: "Summary",
+description: "A concise overview of the main information.", icon: "📄",
+}, { id: "keyPoints", title: "Key points", description: "The most
+important concepts and definitions.", icon: "📌", }, { id: "flashcards",
+title: "Flashcards", description: "Interactive question-and-answer
+revision cards.", icon: "🗂️", }, { id: "quiz", title: "Quiz",
+description: "Multiple-choice questions with explanations.", icon: "✅",
+}, { id: "revisionQuestions", title: "Revision questions", description:
+"Open-ended questions for deeper practice.", icon: "🧠", }, { id:
+"actionPoints", title: "Action points", description: "Practical tasks
+with priorities and reasons.", icon: "🎯", },];
 
-const defaultOutputs: OutputId[] = [ “explanation”, “summary”,
-“flashcards”, “quiz”, “actionPoints”,];
+const defaultOutputs: OutputId[] = [ "explanation", "summary",
+"flashcards", "quiz", "actionPoints",];
 
 class StudyRequestError extends Error { code: string; retryable:
 boolean;
@@ -72,13 +72,13 @@ super(message);
 } }
 
 function getFileExtension( filename: string, ) { return ( filename
-.split(“.”) .pop() ?.trim() .toLowerCase() ?? “” ); }
+.split(".") .pop() ?.trim() .toLowerCase() ?? "" ); }
 
 function isSupportedAudioFile( file: File, ) { return
 SUPPORTED_AUDIO_EXTENSIONS.has( getFileExtension(file.name), ); }
 
 function parseApiError( responseData: unknown, status: number, ) { if (
-typeof responseData === “object” && responseData !== null && “error” in
+typeof responseData === "object" && responseData !== null && "error" in
 responseData ) { const errorValue = responseData.error;
 
     if (
@@ -118,23 +118,23 @@ responseData ) { const errorValue = responseData.error;
 }
 
 if (status === 402) { return new StudyRequestError(
-“API_CREDIT_EXHAUSTED”, “The API account has no available credit.”,
+"API_CREDIT_EXHAUSTED", "The API account has no available credit.",
 false, ); }
 
-if (status === 413) { return new StudyRequestError( “FILE_TOO_LARGE”,
-“The uploaded file is too large.”, false, ); }
+if (status === 413) { return new StudyRequestError( "FILE_TOO_LARGE",
+"The uploaded file is too large.", false, ); }
 
-if (status === 415) { return new StudyRequestError( “UNSUPPORTED_AUDIO”,
-“The selected audio format is not supported.”, false, ); }
+if (status === 415) { return new StudyRequestError( "UNSUPPORTED_AUDIO",
+"The selected audio format is not supported.", false, ); }
 
-if (status === 429) { return new StudyRequestError( “RATE_LIMITED”, “The
-service is temporarily receiving too many requests.”, true, ); }
+if (status === 429) { return new StudyRequestError( "RATE_LIMITED", "The
+service is temporarily receiving too many requests.", true, ); }
 
-if (status === 504) { return new StudyRequestError( “REQUEST_TIMEOUT”,
-“The request took too long to complete.”, true, ); }
+if (status === 504) { return new StudyRequestError( "REQUEST_TIMEOUT",
+"The request took too long to complete.", true, ); }
 
-return new StudyRequestError( “UNKNOWN_ERROR”, “The request could not be
-completed.”, status >= 500, ); }
+return new StudyRequestError( "UNKNOWN_ERROR", "The request could not be
+completed.", status >= 500, ); }
 
 async function requestJson({ url, options, externalSignal,
 timeoutMilliseconds, }: { url: string; options: RequestInit;
@@ -147,7 +147,7 @@ function abortFromExternalSignal() { if (!controller.signal.aborted) {
 controller.abort(); } }
 
 if (externalSignal.aborted) { abortFromExternalSignal(); } else {
-externalSignal.addEventListener( “abort”, abortFromExternalSignal, {
+externalSignal.addEventListener( "abort", abortFromExternalSignal, {
 once: true, }, ); }
 
 const timeoutId = window.setTimeout(() => { didTimeout = true;
@@ -237,14 +237,14 @@ function normalizeClientError( error: unknown, ) { if ( error instanceof
 StudyRequestError ) { return error; }
 
 if (error instanceof Error) { return new StudyRequestError(
-“UNKNOWN_ERROR”, error.message, true, ); }
+"UNKNOWN_ERROR", error.message, true, ); }
 
-return new StudyRequestError( “UNKNOWN_ERROR”, “An unexpected error
-occurred.”, true, ); }
+return new StudyRequestError( "UNKNOWN_ERROR", "An unexpected error
+occurred.", true, ); }
 
 function getRecoveryMessage( code: string, ) { switch (code) { case
-“CONFIGURATION_ERROR”: return “Create .env.local, add OPENAI_API_KEY,
-and restart the development server.”;
+"CONFIGURATION_ERROR": return "Create .env.local, add OPENAI_API_KEY,
+and restart the development server.";
 
     case "INVALID_API_KEY":
       return "Create a new API key, update .env.local, and restart the application.";
@@ -300,17 +300,17 @@ return ${minutes}:${seconds     .toString()     .padStart(2, "0")}; }
 export default function StudyWorkspace() { const activeRequestRef =
 useRef<AbortController | null>( null, );
 
-const [inputMode, setInputMode] = useState(“topic”);
+const [inputMode, setInputMode] = useState("topic");
 
-const [topic, setTopic] = useState(““);
+const [topic, setTopic] = useState("");
 
-const [notes, setNotes] = useState(““);
+const [notes, setNotes] = useState("");
 
 const [audioFile, setAudioFile] = useState<File | null>(null);
 
-const [ educationLevel, setEducationLevel, ] = useState( “beginner”, );
+const [ educationLevel, setEducationLevel, ] = useState( "beginner", );
 
-const [ difficulty, setDifficulty, ] = useState( “medium”, );
+const [ difficulty, setDifficulty, ] = useState( "medium", );
 
 const [ selectedOutputs, setSelectedOutputs, ] = useState<OutputId[]>(
 defaultOutputs, );
@@ -318,7 +318,7 @@ defaultOutputs, );
 const [ requestError, setRequestError, ] = useState<StudyRequestError |
 null>( null, );
 
-const [ statusMessage, setStatusMessage, ] = useState(““);
+const [ statusMessage, setStatusMessage, ] = useState("");
 
 const [ isPrepared, setIsPrepared, ] = useState(false);
 
@@ -326,7 +326,7 @@ const [ isGenerating, setIsGenerating, ] = useState(false);
 
 const [ isRecording, setIsRecording, ] = useState(false);
 
-const [ generationPhase, setGenerationPhase, ] = useState(“idle”);
+const [ generationPhase, setGenerationPhase, ] = useState("idle");
 
 const [ elapsedSeconds, setElapsedSeconds, ] = useState(0);
 
@@ -347,8 +347,8 @@ null>( null, );
 
 const controlsDisabled = isGenerating || isRecording;
 
-const generationMessage = generationPhase === “transcribing” ?
-“Transcribing voice note…” : “Generating study pack…”;
+const generationMessage = generationPhase === "transcribing" ?
+"Transcribing voice note…" : "Generating study pack…";
 
 const isTakingLong = isGenerating && elapsedSeconds >=
 LONG_REQUEST_SECONDS;
@@ -374,8 +374,8 @@ useEffect(() => { if (!isGenerating) { return; }
 useEffect(() => { return () => { activeRequestRef.current?.abort(); };
 }, []);
 
-const sourceTitle = useMemo(() => { if (inputMode === “topic”) { return
-( topic.trim() || “No topic entered” ); }
+const sourceTitle = useMemo(() => { if (inputMode === "topic") { return
+( topic.trim() || "No topic entered" ); }
 
     if (inputMode === "notes") {
       const cleanNotes =
@@ -418,7 +418,7 @@ sourceTitle; }
     ]);
 
 function clearStatusMessages() { setRequestError(null);
-setStatusMessage(““); setIsPrepared(false); }
+setStatusMessage(""); setIsPrepared(false); }
 
 function clearGeneratedContent() { setStudyPack(null);
 setGeneratedOutputs([]); setActiveSessionId(null); }
@@ -431,7 +431,7 @@ return; }
 
 setInputMode(mode); resetGeneratedResults();
 
-if (mode !== “voice”) { setTranscript(null); setAudioFile(null); } }
+if (mode !== "voice") { setTranscript(null); setAudioFile(null); } }
 
 function toggleOutput( outputId: OutputId, ) { if (controlsDisabled) {
 return; }
@@ -566,9 +566,9 @@ setIsRecording(recording);
 
 }
 
-function validateInput() { if ( inputMode === “topic” &&
-topic.trim().length < 3 ) { return “Enter a topic containing at least
-three characters.”; }
+function validateInput() { if ( inputMode === "topic" &&
+topic.trim().length < 3 ) { return "Enter a topic containing at least
+three characters."; }
 
     if (
       inputMode === "notes" &&
@@ -605,7 +605,7 @@ three characters.”; }
 }
 
 async function transcribeAudio( file: File, signal: AbortSignal, ) {
-setGenerationPhase( “transcribing”, );
+setGenerationPhase( "transcribing", );
 
     setTranscript(null);
 
@@ -687,9 +687,9 @@ setGenerationPhase( “transcribing”, );
 
 }
 
-async function generateStudyPack( studyInputMode: | “topic” | “notes”,
+async function generateStudyPack( studyInputMode: | "topic" | "notes",
 content: string, signal: AbortSignal, ) { setGenerationPhase(
-“generating”, );
+"generating", );
 
     const responseData =
       await requestJson<unknown>({
