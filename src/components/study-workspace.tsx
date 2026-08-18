@@ -412,38 +412,31 @@ setGeneratedOutputs([]); setActiveSessionId(null); }
 function resetGeneratedResults() { clearStatusMessages();
 clearGeneratedContent(); }
 
-function selectInputMode( mode: InputMode, ) { if (controlsDisabled) {
-return; }
+function selectInputMode(
+  mode: InputMode,
+) {
+  if (controlsDisabled) {
+    return;
+  }
 
-setInputMode(mode); resetGeneratedResults();
+  activeRequestRef.current?.abort();
+  activeRequestRef.current = null;
 
-if (mode !== "voice") { setTranscript(null); setAudioFile(null); } }
+  setInputMode(mode);
 
-function toggleOutput( outputId: OutputId, ) { if (controlsDisabled) {
-return; }
+  setRequestError(null);
+  setStatusMessage("");
+  setIsPrepared(false);
 
-    setSelectedOutputs(
-      (currentOutputs) => {
-        if (
-          currentOutputs.includes(
-            outputId,
-          )
-        ) {
-          return currentOutputs.filter(
-            (item) =>
-              item !== outputId,
-          );
-        }
+  setStudyPack(null);
+  setGeneratedOutputs([]);
+  setActiveSessionId(null);
 
-        return [
-          ...currentOutputs,
-          outputId,
-        ];
-      },
-    );
+  setTranscript(null);
 
-    resetGeneratedResults();
-
+  if (mode !== "voice") {
+    setAudioFile(null);
+  }
 }
 
 function selectAllOutputs() { if (controlsDisabled) { return; }
@@ -463,6 +456,30 @@ function clearAllOutputs() { if (controlsDisabled) { return; }
     setSelectedOutputs([]);
     resetGeneratedResults();
 
+}
+
+function toggleOutput(
+  outputId: OutputId,
+) {
+  if (controlsDisabled) {
+    return;
+  }
+
+  setSelectedOutputs(
+    (currentOutputs) =>
+      currentOutputs.includes(
+        outputId,
+      )
+        ? currentOutputs.filter(
+            (id) => id !== outputId,
+          )
+        : [
+            ...currentOutputs,
+            outputId,
+          ],
+  );
+
+  resetGeneratedResults();
 }
 
 function handleVoiceFileReady( file: File, ) { clearStatusMessages();
@@ -957,7 +974,8 @@ async function runGeneration() { if (isGenerating) { return; }
         | null = null;
 
       if (
-        inputMode === "voice"
+        inputMode === "voice" &&
+        audioFile instanceof File
       ) {
         if (!(audioFile instanceof File)) {
           throw new StudyRequestError(
@@ -982,7 +1000,7 @@ async function runGeneration() { if (isGenerating) { return; }
         setTranscript(null);
 
         studyInputMode =
-          inputMode;
+          inputMode as "topic" | "notes";
 
         content =
           inputMode === "topic"
