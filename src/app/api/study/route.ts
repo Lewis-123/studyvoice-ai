@@ -25,6 +25,8 @@ export const maxDuration = 60;
 
 const SERVER_TIMEOUT_MILLISECONDS = 55_000;
 
+const MAX_CONTENT_LENGTH = 12_000;
+
 function createRequestedSectionsList(
   selectedOutputs: string[],
 ) {
@@ -66,6 +68,12 @@ export async function POST(request: Request) {
         studyRequest.selectedOutputs,
       );
 
+    const cleanedContent =
+      studyRequest.content.slice(
+        0,
+        MAX_CONTENT_LENGTH,
+      );
+
     const { output } = await generateText({
       model: groq("openai/gpt-oss-20b"),
 
@@ -77,8 +85,11 @@ export async function POST(request: Request) {
       }),
 
       maxRetries: 1,
-      maxOutputTokens: 7_000,
+
+      maxOutputTokens: 3_500,
+
       temperature: 0.2,
+
       abortSignal: abortContext.signal,
 
       providerOptions: {
@@ -156,9 +167,15 @@ ACTION POINTS
 Create a structured study pack using the following settings.
 
 Input type: ${studyRequest.inputMode}
-Education level: ${studyRequest.educationLevel}
-Quiz difficulty: ${studyRequest.difficulty}
-Requested sections: ${requestedSections}
+
+Education level:
+${studyRequest.educationLevel}
+
+Quiz difficulty:
+${studyRequest.difficulty}
+
+Requested sections:
+${requestedSections}
 
 The selected output identifiers are:
 
@@ -166,7 +183,7 @@ ${JSON.stringify(studyRequest.selectedOutputs)}
 
 STUDY MATERIAL
 --- BEGIN STUDY MATERIAL ---
-${studyRequest.content}
+${cleanedContent}
 --- END STUDY MATERIAL ---
 
 IMPORTANT OUTPUT INSTRUCTIONS
@@ -196,12 +213,34 @@ IMPORTANT OUTPUT INSTRUCTIONS
       );
     }
 
-    return Response.json(validatedOutput.data, {
-      headers: {
-        "Cache-Control": "no-store",
+    return Response.json(
+      validatedOutput.data,
+      {
+        headers: {
+          "Cache-Control": "no-store",
+        },
       },
-    });
+    );
+
   } catch (error) {
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "";
+
+    if (
+      message.includes("tokens per minute") ||
+      message.includes("Request too large")
+    ) {
+      return createPublicErrorResponse(
+        "FILE_TOO_LARGE",
+        "The study request is too large. Try a shorter topic or fewer selected outputs.",
+        413,
+        false,
+      );
+    }
+
     if (error instanceof SyntaxError) {
       return createPublicErrorResponse(
         "INVALID_REQUEST",
@@ -243,6 +282,7 @@ IMPORTANT OUTPUT INSTRUCTIONS
       error,
       "study generation",
     );
+
   } finally {
     abortContext?.cleanup();
   }
