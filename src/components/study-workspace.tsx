@@ -20,7 +20,7 @@ type EducationLevel = StudySessionEducationLevel;
 
 type QuizDifficulty = StudySessionQuizDifficulty;
 
-type GenerationPhase = | "idle" | "transcribing" | "generating";
+type GenerationPhase = "idle" | "transcribing" | "generating";
 
 type StudyOutput = { id: OutputId; title: string; description: string;
 icon: string; };
@@ -37,24 +37,18 @@ const SUPPORTED_AUDIO_EXTENSIONS = new Set([ "mp3", "mp4", "mpeg",
 const inputModes: Array<{ id: InputMode; title: string; description:
 string; icon: string; }> = [ { id: "topic", title: "Enter topic",
 description: "Generate a study pack from a subject or question.", icon:
-"⌨️", }, { id: "notes", title: "Paste notes", description: "Transform
-written notes into revision materials.", icon: "📝", }, { id: "voice",
-title: "Voice note", description: "Record or upload audio for
-transcription.", icon: "🎙️", },];
+"⌨️", }, { id: "notes", title: "Paste notes", description: "Transform written notes into revision materials.", icon: "📝", }, { id: "voice",
+title: "Voice note", description: "Record or upload audio for transcription.", icon: "🎙️", },];
 
 const studyOutputs: StudyOutput[] = [ { id: "explanation", title:
-"Explanation", description: "A clear, detailed explanation of the
-material.", icon: "💡", }, { id: "summary", title: "Summary",
+"Explanation", description: "A clear, detailed explanation of the material.", icon: "💡", }, { id: "summary", title: "Summary",
 description: "A concise overview of the main information.", icon: "📄",
-}, { id: "keyPoints", title: "Key points", description: "The most
-important concepts and definitions.", icon: "📌", }, { id: "flashcards",
-title: "Flashcards", description: "Interactive question-and-answer
-revision cards.", icon: "🗂️", }, { id: "quiz", title: "Quiz",
+}, { id: "keyPoints", title: "Key points", description: "The most important concepts and definitions.", icon: "📌", }, { id: "flashcards",
+title: "Flashcards", description: "Interactive question-and-answer revision cards.", icon: "🗂️", }, { id: "quiz", title: "Quiz",
 description: "Multiple-choice questions with explanations.", icon: "✅",
 }, { id: "revisionQuestions", title: "Revision questions", description:
 "Open-ended questions for deeper practice.", icon: "🧠", }, { id:
-"actionPoints", title: "Action points", description: "Practical tasks
-with priorities and reasons.", icon: "🎯", },];
+"actionPoints", title: "Action points", description: "Practical tasks with priorities and reasons.", icon: "🎯", },];
 
 const defaultOutputs: OutputId[] = [ "explanation", "summary",
 "flashcards", "quiz", "actionPoints",];
@@ -74,8 +68,7 @@ super(message);
 function getFileExtension( filename: string, ) { return ( filename
 .split(".") .pop() ?.trim() .toLowerCase() ?? "" ); }
 
-function isSupportedAudioFile( file: File, ) { return
-SUPPORTED_AUDIO_EXTENSIONS.has( getFileExtension(file.name), ); }
+function isSupportedAudioFile(file: File) { return SUPPORTED_AUDIO_EXTENSIONS.has(getFileExtension(file.name)); }
 
 function parseApiError( responseData: unknown, status: number, ) { if (
 typeof responseData === "object" && responseData !== null && "error" in
@@ -127,18 +120,16 @@ if (status === 413) { return new StudyRequestError( "FILE_TOO_LARGE",
 if (status === 415) { return new StudyRequestError( "UNSUPPORTED_AUDIO",
 "The selected audio format is not supported.", false, ); }
 
-if (status === 429) { return new StudyRequestError( "RATE_LIMITED", "The
-service is temporarily receiving too many requests.", true, ); }
+if (status === 429) { return new StudyRequestError( "RATE_LIMITED", "The service is temporarily receiving too many requests.", true, ); }
 
 if (status === 504) { return new StudyRequestError( "REQUEST_TIMEOUT",
 "The request took too long to complete.", true, ); }
 
-return new StudyRequestError( "UNKNOWN_ERROR", "The request could not be
-completed.", status >= 500, ); }
+return new StudyRequestError( "UNKNOWN_ERROR", "The request could not be completed.", status >= 500, ); }
 
-async function requestJson({ url, options, externalSignal,
+async function requestJson<T>({ url, options, externalSignal,
 timeoutMilliseconds, }: { url: string; options: RequestInit;
-externalSignal: AbortSignal; timeoutMilliseconds: number; }): Promise {
+externalSignal: AbortSignal; timeoutMilliseconds: number; }): Promise<T> {
 const controller = new AbortController();
 
 let didTimeout = false;
@@ -159,7 +150,7 @@ const timeoutId = window.setTimeout(() => { didTimeout = true;
       }
     }, timeoutMilliseconds);
 
-try { const response = await fetch( url, { …options, signal:
+try { const response = await fetch( url, { ...options, signal:
 controller.signal, }, );
 
     const rawResponse =
@@ -185,8 +176,7 @@ controller.signal, }, );
 
     return responseData as T;
 
-} catch (error) { if ( error instanceof StudyRequestError ) { throw
-error; }
+} catch (error) { if (error instanceof StudyRequestError) { throw error; }
 
     if (didTimeout) {
       throw new StudyRequestError(
@@ -239,12 +229,10 @@ StudyRequestError ) { return error; }
 if (error instanceof Error) { return new StudyRequestError(
 "UNKNOWN_ERROR", error.message, true, ); }
 
-return new StudyRequestError( "UNKNOWN_ERROR", "An unexpected error
-occurred.", true, ); }
+return new StudyRequestError( "UNKNOWN_ERROR", "An unexpected error occurred.", true, ); }
 
 function getRecoveryMessage( code: string, ) { switch (code) { case
-"CONFIGURATION_ERROR": return "Create .env.local, add OPENAI_API_KEY,
-and restart the development server.";
+"CONFIGURATION_ERROR": return "Create .env.local, add OPENAI_API_KEY, and restart the development server.";
 
     case "INVALID_API_KEY":
       return "Create a new API key, update .env.local, and restart the application.";
@@ -295,12 +283,12 @@ Math.floor( totalSeconds / 60, );
 
 const seconds = totalSeconds % 60;
 
-return ${minutes}:${seconds     .toString()     .padStart(2, "0")}; }
+return `${minutes}:${seconds.toString().padStart(2, "0")}`; }
 
 export default function StudyWorkspace() { const activeRequestRef =
 useRef<AbortController | null>( null, );
 
-const [inputMode, setInputMode] = useState("topic");
+const [inputMode, setInputMode] = useState<InputMode>("topic");
 
 const [topic, setTopic] = useState("");
 
@@ -308,9 +296,9 @@ const [notes, setNotes] = useState("");
 
 const [audioFile, setAudioFile] = useState<File | null>(null);
 
-const [ educationLevel, setEducationLevel, ] = useState( "beginner", );
+const [ educationLevel, setEducationLevel, ] = useState<EducationLevel>( "beginner", );
 
-const [ difficulty, setDifficulty, ] = useState( "medium", );
+const [ difficulty, setDifficulty, ] = useState<QuizDifficulty>( "medium", );
 
 const [ selectedOutputs, setSelectedOutputs, ] = useState<OutputId[]>(
 defaultOutputs, );
@@ -326,7 +314,7 @@ const [ isGenerating, setIsGenerating, ] = useState(false);
 
 const [ isRecording, setIsRecording, ] = useState(false);
 
-const [ generationPhase, setGenerationPhase, ] = useState("idle");
+const [ generationPhase, setGenerationPhase, ] = useState<GenerationPhase>("idle");
 
 const [ elapsedSeconds, setElapsedSeconds, ] = useState(0);
 
@@ -374,8 +362,7 @@ useEffect(() => { if (!isGenerating) { return; }
 useEffect(() => { return () => { activeRequestRef.current?.abort(); };
 }, []);
 
-const sourceTitle = useMemo(() => { if (inputMode === "topic") { return
-( topic.trim() || "No topic entered" ); }
+const sourceTitle = useMemo(() => { if (inputMode === "topic") { return (topic.trim() || "No topic entered"); }
 
     if (inputMode === "notes") {
       const cleanNotes =
@@ -400,8 +387,7 @@ const sourceTitle = useMemo(() => { if (inputMode === "topic") { return
 
 }, [ audioFile, inputMode, notes, topic, ]);
 
-const resultSourceTitle = useMemo(() => { if (!activeSessionId) { return
-sourceTitle; }
+const resultSourceTitle = useMemo(() => { if (!activeSessionId) { return sourceTitle; }
 
       return (
         savedSessions.find(
@@ -567,8 +553,7 @@ setIsRecording(recording);
 }
 
 function validateInput() { if ( inputMode === "topic" &&
-topic.trim().length < 3 ) { return "Enter a topic containing at least
-three characters."; }
+topic.trim().length < 3 ) { return "Enter a topic containing at least three characters."; }
 
     if (
       inputMode === "notes" &&
@@ -687,7 +672,7 @@ setGenerationPhase( "transcribing", );
 
 }
 
-async function generateStudyPack( studyInputMode: | "topic" | "notes",
+async function generateStudyPack( studyInputMode: "topic" | "notes",
 content: string, signal: AbortSignal, ) { setGenerationPhase(
 "generating", );
 
@@ -741,7 +726,7 @@ content: string, signal: AbortSignal, ) { setGenerationPhase(
 function saveGeneratedSession({ generatedStudyPack, sourceContent,
 originalInputMode, generatedTranscript, }: { generatedStudyPack:
 StudyPack; sourceContent: string; originalInputMode: InputMode;
-generatedTranscript: | StudyTranscript | null; }) { const newSession:
+generatedTranscript: StudyTranscript | null; }) { const newSession:
 SavedStudySession = { id: createStudySessionId(),
 
         createdAt:
@@ -1090,6 +1075,9 @@ function handleSubmit( event: FormEvent, ) { event.preventDefault();
 }
 
 return (
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 lg:px-8">
           <Link
             href="/"
             className="flex items-center gap-3"
